@@ -3,14 +3,14 @@
 <div align="center">
 
 <pre>
- _   _     _      ____  _   _   ___  
-| \ | |   / \    / ___|| | | | / _ \ 
+ _   _     _      ____  _   _   ___
+| \ | |   / \    / ___|| | | | / _ \
 |  \| |  / _ \  | |    | |_| || | | |
 | |\  | / ___ \ | |___ |  _  || |_| |
-|_| \_|/_/   \_\ \____||_| |_| \___/ 
+|_| \_|/_/   \_\ \____||_| |_| \___/
 </pre>
 
-  <h3>Python 向けの軽量・スキーマファーストな動的構成サービス。</h3>
+  <h3>Python 向けの軽量・セルフホスト型な動的構成サービス。</h3>
 
   <p>
     <a href="README.md">English</a> |
@@ -38,18 +38,23 @@
 
 ## Nacho とは？
 
-Nacho は Python アプリケーション向けのスキーマファーストな動的構成サービスです。
-YAML、JSON、TOML の構成ファイルを扱い、ローカルファイル・インメモリ辞書・リモート構成サーバーをまたいで一貫した API を提供します。
+Nacho は Python 向けの軽量・セルフホスト型な構成**サービス**です。
+
+Nacho サーバーを起動し、数行のコードでサービスをそこに接続すれば、構成変更を
+プッシュするだけで、その変更が各サービスへ**リアルタイム**に届きます——再デプロイも
+再起動も不要です。あらゆる変更はストレージへ保存される前に JSON Schema で検証され、
+組み込みの Web UI でそのすべてを管理できます。サーバーが不要な場合は、同じ
+ライブラリをスタンドアロンモードでローカルファイルに対して直接使うこともできます。
 
 | 機能 | 説明 |
 |---|---|
-| **マルチフォーマット対応** | 統一された API で YAML、JSON、TOML を読み書き。 |
-| **スキーマファーストな検証** | すべての書き込みを JSON Schema に対して検証——不正なデータはストレージへ到達する前に拒否される。 |
-| **イベントシステム** | ドット記法のパスパターンをキーに、特定の構成変更で発火するハンドラを登録。 |
-| **環境変数オーバーライド** | 環境変数を実行時に重ね合わせ、ストレージへは書き戻さない。 |
-| **リモート構成** | Nacho API サーバーに接続し、集中管理と任意の WebSocket プッシュを実現。 |
-| **スレッドセーフ** | すべての読み書き操作は再入可能ロックで保護される。 |
-| **プラガブルなストレージ** | アプリケーションコードを変更せずに、ファイル・インメモリ・リモートのバックエンドを差し替え可能。 |
+| **集中型の構成サーバー** | 1 つの Nacho サーバーを起動し、すべてのサービスの構成を REST API・CLI・Web UI から一元管理。 |
+| **リアルタイム更新** | クライアントは WebSocket で購読し、変更が起きた瞬間にそれを受け取る——ポーリングも再起動も不要。 |
+| **スキーマファーストな検証** | すべての書き込みを JSON Schema に対して検査；不正なデータはストレージへ到達する前に拒否される。 |
+| **そのまま使える Python クライアント** | `RemoteStorageBackend` はリモートアプリにローカルファイルと同一の API を与える——ストレージを差し替えるだけで、他は何も変えなくてよい。 |
+| **組み込みの管理 UI** | サーバー自身がホストする単一ファイルの Web UI から、JSON・YAML・TOML でアプリを作成し、構成やスキーマを編集。 |
+| **マルチフォーマット** | JSON・YAML・TOML をあらゆる場所で：API ペイロード、保存ファイル、UI エディタ。 |
+| **スタンドアロンモード** | サーバー不要——Nacho をローカルファイルやインメモリ辞書に向け、ただの構成ライブラリとして利用。 |
 
 ## 前提条件
 
@@ -61,17 +66,17 @@ YAML、JSON、TOML の構成ファイルを扱い、ローカルファイル・�
 Nacho はコア依存関係を小さく保つため、任意の extras を使用します。
 
 ```bash
-# コア——ローカルファイル管理のみ
-pip install nacho-python
-
-# Web サーバーと REST API 付き
+# 構成サーバーを実行
 pip install nacho-python[server]
+
+# サービスをサーバーに接続（リモートクライアント）
+pip install nacho-python[remote]
+
+# コア——スタンドアロンのローカルファイル管理のみ
+pip install nacho-python
 
 # JSON Schema 検証付き
 pip install nacho-python[schema]
-
-# リモートクライアント付き
-pip install nacho-python[remote]
 
 # すべての機能
 pip install nacho-python[all]
@@ -82,222 +87,59 @@ pip install nacho-python[dev]
 
 | Extra | 依存関係 | 用途 |
 |---|---|---|
-| *(なし)* | pyyaml, tomli-w | ローカルファイルの読み書き（YAML、JSON、TOML） |
-| `server` | fastapi, uvicorn, websockets | REST API と WebSocket 監視サーバー |
-| `schema` | jsonschema, rfc3987 | 書き込み時の JSON Schema 検証 |
+| `server` | fastapi, uvicorn, websockets | REST API と WebSocket 構成サーバー |
 | `remote` | requests, websocket-client | リモート構成クライアント |
+| `schema` | jsonschema, rfc3987 | 書き込み時の JSON Schema 検証 |
+| *(なし)* | pyyaml, tomli-w | スタンドアロンのローカルファイル読み書き（YAML、JSON、TOML） |
 | `all` | 上記すべて | 完全インストール |
 | `dev` | pytest, httpx, coverage | 開発とテスト |
 
 ## クイックスタート
 
-```python
-from nacho import Nacho
-
-# ファイルベースの構成（ファイルが存在しない場合は作成される）
-config = Nacho("config.yaml", events=True)
-
-# "database" 配下の任意のキーが変更されたときに発火するハンドラを登録
-@config.on_change("database.*")
-def on_db_change(path, old_value, new_value, **kwargs):
-    print(f"{path}: {old_value} -> {new_value}")
-
-# ドット記法のキーで値を読み取る
-host = config.get("database.host", default="localhost")
-port = config.get_int("database.port", default=5432)
-
-# 値を書き込む——登録済みのハンドラが発火する
-config.set("database.pool_size", 10)
-
-# ディスクへ永続化
-config.save()
-```
-
-## 構成管理
-
-Nacho はファイルパス、辞書、または明示的なストレージバックエンドを受け付けます。
-
-```python
-from nacho import Nacho
-
-# 初期データ付きのインメモリ構成
-config = Nacho({"database": {"host": "127.0.0.1", "port": 5432}})
-
-# ファイルベースの構成
-config = Nacho("config.yaml")
-
-# 型変換付きの読み取り
-host    = config.get("database.host")            # str
-port    = config.get_int("database.port")        # int
-debug   = config.get_bool("app.debug")           # bool
-tags    = config.get_list("app.tags")            # list
-options = config.get_dict("app.options")         # dict
-
-# 追加のキーをディープマージ（既存のキーは削除しない）
-config.update({"logging": {"level": "DEBUG"}})
-
-# 構成全体を置き換える
-config.replace({"database": {"host": "prod-db", "port": 5432}})
-
-# キーを削除する
-config.delete("legacy.setting")
-
-# ストレージから再読み込みし、環境変数オーバーライドを再適用
-config.reload()
-
-# 現在の構成を JSON 文字列としてエクスポート
-print(config.json())
-```
-
-### アトミックなトランザクション
-
-複数の書き込みを 1 つのアトミックな操作にまとめます。ブロックが正常に終了するとトランザクションはコミットされ、例外が発生すると破棄されます。
-
-```python
-with config.transaction() as txn:
-    txn.set("database.host", "new-host")
-    txn.set("database.port", 5433)
-# ハンドラはここで集約された変更とともに 1 回発火する
-config.save()
-```
-
-## 環境変数オーバーライド
-
-`env_prefix` を渡すと、読み込み時に環境変数を構成へ重ね合わせます。変数名は `{PREFIX}_{NESTED_KEY}` のパターンに従い、ネストの各階層は区切り文字（デフォルト: `_`）で区切られます。
+**1. Nacho サーバーを起動する**
 
 ```bash
-export MYAPP_DATABASE_HOST=prod-db.example.com
-export MYAPP_DATABASE_PORT=5433
-export MYAPP_FEATURES_ENABLED=true
+pip install nacho-python[server]
+nacho server --config config.yaml --api-key "secure-key"
 ```
 
-```python
-config = Nacho(
-    "config.yaml",
-    env_prefix="MYAPP",
-    env_delimiter="_",
-)
+サーバーは `http://localhost:8000` で稼働します——REST API、WebSocket プッシュ、
+そして `/ui` の組み込み管理 UI を提供します。
 
-config.get("database.host")      # "prod-db.example.com"
-config.get_int("database.port")  # 5433
-config.get_bool("features.enabled")  # True
+**2. サービスをそこに接続する**
+
+```bash
+pip install nacho-python[remote]
 ```
-
-環境変数の値は可能な場合 bool、int、float、JSON オブジェクトへ変換され、それ以外は文字列にフォールバックします。環境変数オーバーライドは実行時のみの重ね合わせです。`save()` は環境変数を重ねた実効値ではなく、保存されている構成を永続化します。
-
-## イベントシステム
-
-イベントシステムは、書き込みが成功するたびに変更通知をディスパッチします。イベントは変更されたパス、旧値、新値、イベント種別を保持します。
-
-```python
-from nacho import Nacho, EventType
-
-config = Nacho("config.yaml", events=True)
-
-# "database" 配下の任意のキーの変更で発火
-@config.on_change("database.*")
-def on_db_change(path, old_value, new_value, **kwargs):
-    print(f"database key changed: {path}")
-
-# どのキーが変更されたかに関わらず、書き込み操作ごとに 1 回発火（集約イベント）
-@config.on_change("@global")
-def on_any_change(**kwargs):
-    print("config was modified")
-
-# "cache" 配下の CREATE または UPDATE イベントで発火
-@config.on_event([EventType.CREATE, EventType.UPDATE], path_pattern="cache.*")
-def on_cache_change(event_type, path, new_value, **kwargs):
-    print(f"{event_type.name} {path} = {new_value}")
-
-config.set("database.host", "new-host")  # on_db_change、on_any_change を発火
-config.set("cache.ttl", 600)             # on_cache_change を発火（CREATE）
-config.set("cache.ttl", 300)             # on_cache_change を発火（UPDATE）
-```
-
-**パスパターン一覧:**
-
-| パターン | 発火条件 |
-|---|---|
-| `None`（デフォルト） | 任意のパスにおける任意の変更 |
-| `"@global"` | 書き込み操作ごとに 1 回（集約） |
-| `"*"` | 任意のキー単位イベント（集約ではない） |
-| `"database.*"` | `database` 配下にネストされた任意のキー |
-
-ハンドラは同期・非同期のいずれでも構いません。非同期ハンドラは、実行中のイベントループがあればそこにスケジュールされ、なければ `asyncio.run()` で実行されます。
-
-## スキーマ検証
-
-Nacho はすべての書き込みでスキーマを強制します。不正な値は変更が適用される前にただちに `ValidationError` を送出します——構成が不正な状態のまま残ることはありません。
-
-`pip install nacho-python[schema]` が必要です。
-
-```json
-// schema.json
-{
-    "type": "object",
-    "properties": {
-        "database": {
-            "type": "object",
-            "required": ["host", "port"],
-            "properties": {
-                "host": {"type": "string"},
-                "port": {"type": "integer", "minimum": 1024}
-            }
-        }
-    },
-    "required": ["database"]
-}
-```
-
-```python
-from nacho import Nacho, ValidationError
-
-config = Nacho("config.yaml", schema="schema.json")
-
-# 不正な書き込みはただちに送出される——構成は変更されない
-try:
-    config.set("database.port", "not-a-number")
-except ValidationError as e:
-    print(e.errors)  # 違反内容の文字列リスト
-
-# 書き込まずに、現在の構成をスキーマに対して検査
-errors = config.validate()
-if errors:
-    print("Current config has violations:", errors)
-
-# 任意の辞書をスキーマに対して検証
-errors = config.check({"database": {"host": "localhost", "port": 80}})
-print(errors)  # ["port must be >= 1024"]
-```
-
-## リモート構成
-
-Nacho サーバーに接続し、任意で WebSocket 経由のリアルタイム更新を受け取ります。クライアントは REST API を通じて書き込み、サーバーは WebSocket で変更をプッシュバックできます。
-
-`pip install nacho-python[remote]` が必要です。
 
 ```python
 from nacho import Nacho, RemoteStorageBackend
 
-storage = RemoteStorageBackend(
-    url="https://config-server.example.com",
-    app_name="my-service",
-    api_key="secure-key",
-    watch=True,  # WebSocket 更新をオプトインで有効化
+config = Nacho(
+    storage=RemoteStorageBackend(
+        url="http://localhost:8000",
+        app_name="my-service",
+        api_key="secure-key",
+        watch=True,           # WebSocket でリアルタイム更新を受け取る
+    ),
+    events=True,
 )
 
-config = Nacho(storage=storage, events=True)
+# ローカルの辞書とまったく同じように構成を読み取る
+port = config.get_int("server.port", default=8000)
 
-# API はファイルベースの使い方と同一
-host = config.get("database.host")
-
-# ハンドラはサーバーからプッシュされた変更で発火する
+# 誰かがサーバー上でそれを変更した瞬間に反応する
 @config.on_change("features.*")
-def on_feature_change(path, new_value, **kwargs):
-    print(f"feature flag updated: {path} = {new_value}")
+def on_flag_change(path, new_value, **kwargs):
+    print(f"{path} is now {new_value}")
 ```
 
-## REST API サーバー
+UI・CLI・API のどこから値を変更しても——接続中のすべてのクライアントがただちにそれを受け取ります。
+
+> **サーバーは不要ですか？** Nacho はスタンドアロンのファイルベースのライブラリとしても動作します：
+> `config = Nacho("config.yaml")`。[スタンドアロンのファイルベース利用](#スタンドアロンのファイルベース利用)を参照してください。
+
+## Nacho サーバーの実行
 
 `NachoOrchestrator` は 1 つ以上の `Nacho` インスタンスを FastAPI アプリケーションでラップします。
 このサーバーは API ファーストです。インタラクティブな OpenAPI ドキュメントには `/docs`、リアルタイムの構成更新には `/ws/{app}`、組み込みの管理 UI には `/ui` を使用します。
@@ -318,6 +160,8 @@ server = NachoOrchestrator(
 )
 server.run(host="0.0.0.0", port=8000)
 ```
+
+サーバーを起動する最も簡単な方法は CLI です——[コマンドラインインターフェース](#コマンドラインインターフェース)を参照してください。
 
 ### 管理 UI
 
@@ -432,6 +276,214 @@ curl -X PUT http://localhost:8000/api/apps/my-service/config/cache.ttl \
 |---|---|---|
 | `/ws/{app}` | WebSocket | 構成変更イベントを受信 |
 
+## リモートクライアント
+
+リモートクライアントは Nacho サーバーに接続し、任意で WebSocket 経由のリアルタイム更新を受け取ります。クライアントは REST API を通じて書き込み、サーバーは WebSocket で変更をプッシュバックします。いったん構築されると、リモートバックエンドの `Nacho` インスタンスは、ファイルベースのものと**まったく同じ**ように振る舞います——同じ `get`、`set`、`on_change`、スキーマ API です。
+
+`pip install nacho-python[remote]` が必要です。
+
+```text
+                 REST reads/writes
+  +-------------+  GET/PUT/PATCH/DELETE   +----------------------+
+  | Python app  | -----------------------> | Nacho server         |
+  | Nacho       |                          | REST API + Web UI    |
+  | Remote      | <----------------------- | File/dict storage    |
+  | client      |    WebSocket pushes      | Schema validation    |
+  +-------------+       /ws/{app}          +----------------------+
+         |                                             ^
+         | on_change handlers                          |
+         +---------------------------------------------+
+                    live config updates
+```
+
+```python
+from nacho import Nacho, RemoteStorageBackend
+
+storage = RemoteStorageBackend(
+    url="https://config-server.example.com",
+    app_name="my-service",
+    api_key="secure-key",
+    watch=True,  # WebSocket 更新をオプトインで有効化
+)
+
+config = Nacho(storage=storage, events=True)
+
+# API はファイルベースの使い方と同一
+host = config.get("database.host")
+
+# ハンドラはサーバーからプッシュされた変更で発火する
+@config.on_change("features.*")
+def on_feature_change(path, new_value, **kwargs):
+    print(f"feature flag updated: {path} = {new_value}")
+```
+
+SDK をまったく使わず、[コマンドライン](#リモート)から直接サーバーにアクセスすることもできます:
+
+```bash
+nacho get database.host --remote http://config-server:8000 --app-name my-service
+```
+
+## イベントシステム
+
+イベントシステムは、書き込みが成功するたびに変更通知をディスパッチします——その変更がローカルで行われたものでも、**Nacho サーバーからプッシュされたもの**でも同様です。イベントは変更されたパス、旧値、新値、イベント種別を保持します。
+
+```python
+from nacho import Nacho, EventType
+
+config = Nacho("config.yaml", events=True)
+
+# "database" 配下の任意のキーの変更で発火
+@config.on_change("database.*")
+def on_db_change(path, old_value, new_value, **kwargs):
+    print(f"database key changed: {path}")
+
+# どのキーが変更されたかに関わらず、書き込み操作ごとに 1 回発火（集約イベント）
+@config.on_change("@global")
+def on_any_change(**kwargs):
+    print("config was modified")
+
+# "cache" 配下の CREATE または UPDATE イベントで発火
+@config.on_event([EventType.CREATE, EventType.UPDATE], path_pattern="cache.*")
+def on_cache_change(event_type, path, new_value, **kwargs):
+    print(f"{event_type.name} {path} = {new_value}")
+
+config.set("database.host", "new-host")  # on_db_change、on_any_change を発火
+config.set("cache.ttl", 600)             # on_cache_change を発火（CREATE）
+config.set("cache.ttl", 300)             # on_cache_change を発火（UPDATE）
+```
+
+**パスパターン一覧:**
+
+| パターン | 発火条件 |
+|---|---|
+| `None`（デフォルト） | 任意のパスにおける任意の変更 |
+| `"@global"` | 書き込み操作ごとに 1 回（集約） |
+| `"*"` | 任意のキー単位イベント（集約ではない） |
+| `"database.*"` | `database` 配下にネストされた任意のキー |
+
+ハンドラは同期・非同期のいずれでも構いません。非同期ハンドラは、実行中のイベントループがあればそこにスケジュールされ、なければ `asyncio.run()` で実行されます。
+
+## スキーマ検証
+
+Nacho はすべての書き込みでスキーマを強制します。不正な値は変更が適用される前にただちに `ValidationError` を送出します——構成が不正な状態のまま残ることはありません。これはローカルの書き込みと、サーバーが受け入れるデータの両方に適用されます。
+
+`pip install nacho-python[schema]` が必要です。
+
+```json
+// schema.json
+{
+    "type": "object",
+    "properties": {
+        "database": {
+            "type": "object",
+            "required": ["host", "port"],
+            "properties": {
+                "host": {"type": "string"},
+                "port": {"type": "integer", "minimum": 1024}
+            }
+        }
+    },
+    "required": ["database"]
+}
+```
+
+```python
+from nacho import Nacho, ValidationError
+
+config = Nacho("config.yaml", schema="schema.json")
+
+# 不正な書き込みはただちに送出される——構成は変更されない
+try:
+    config.set("database.port", "not-a-number")
+except ValidationError as e:
+    print(e.errors)  # 違反内容の文字列リスト
+
+# 書き込まずに、現在の構成をスキーマに対して検査
+errors = config.validate()
+if errors:
+    print("Current config has violations:", errors)
+
+# 任意の辞書をスキーマに対して検証
+errors = config.check({"database": {"host": "localhost", "port": 80}})
+print(errors)  # ["port must be >= 1024"]
+```
+
+## スタンドアロンのファイルベース利用
+
+Nacho はサーバーを必須としません。ローカルファイル（またはそのままの辞書）を渡せば、自己完結した構成ライブラリとして動作します——スクリプト、テスト、シングルプロセスのアプリに最適です。以下の内容は、Nacho がファイル・辞書・リモートサーバーのいずれに支えられていても、同じように機能します。
+
+### 構成管理
+
+Nacho はファイルパス、辞書、または明示的なストレージバックエンドを受け付けます。
+
+```python
+from nacho import Nacho
+
+# 初期データ付きのインメモリ構成
+config = Nacho({"database": {"host": "127.0.0.1", "port": 5432}})
+
+# ファイルベースの構成
+config = Nacho("config.yaml")
+
+# 型変換付きの読み取り
+host    = config.get("database.host")            # str
+port    = config.get_int("database.port")        # int
+debug   = config.get_bool("app.debug")           # bool
+tags    = config.get_list("app.tags")            # list
+options = config.get_dict("app.options")         # dict
+
+# 追加のキーをディープマージ（既存のキーは削除しない）
+config.update({"logging": {"level": "DEBUG"}})
+
+# 構成全体を置き換える
+config.replace({"database": {"host": "prod-db", "port": 5432}})
+
+# キーを削除する
+config.delete("legacy.setting")
+
+# ストレージから再読み込みし、環境変数オーバーライドを再適用
+config.reload()
+
+# 現在の構成を JSON 文字列としてエクスポート
+print(config.json())
+```
+
+### アトミックなトランザクション
+
+複数の書き込みを 1 つのアトミックな操作にまとめます。ブロックが正常に終了するとトランザクションはコミットされ、例外が発生すると破棄されます。
+
+```python
+with config.transaction() as txn:
+    txn.set("database.host", "new-host")
+    txn.set("database.port", 5433)
+# ハンドラはここで集約された変更とともに 1 回発火する
+config.save()
+```
+
+### 環境変数オーバーライド
+
+`env_prefix` を渡すと、読み込み時に環境変数を構成へ重ね合わせます。変数名は `{PREFIX}_{NESTED_KEY}` のパターンに従い、ネストの各階層は区切り文字（デフォルト: `_`）で区切られます。
+
+```bash
+export MYAPP_DATABASE_HOST=prod-db.example.com
+export MYAPP_DATABASE_PORT=5433
+export MYAPP_FEATURES_ENABLED=true
+```
+
+```python
+config = Nacho(
+    "config.yaml",
+    env_prefix="MYAPP",
+    env_delimiter="_",
+)
+
+config.get("database.host")      # "prod-db.example.com"
+config.get_int("database.port")  # 5433
+config.get_bool("features.enabled")  # True
+```
+
+環境変数の値は可能な場合 bool、int、float、JSON オブジェクトへ変換され、それ以外は文字列にフォールバックします。環境変数オーバーライドは実行時のみの重ね合わせです。`save()` は環境変数を重ねた実効値ではなく、保存されている構成を永続化します。
+
 ## コマンドラインインターフェース
 
 ```bash
@@ -452,28 +504,6 @@ nacho server \
   --data-dir ".nacho/apps" \
   --event true \
   --read-only false
-```
-
-### ローカル構成
-
-```bash
-# テンプレートから新しい構成を作成
-nacho init config.yaml --template default
-
-# 利用可能なテンプレート: empty、default、web-app、api-service、microservice
-
-# 読み取り
-nacho get database.host --config config.yaml
-nacho get --config config.yaml --format json
-
-# 書き込み
-nacho set database.port 5432 --config config.yaml
-
-# 削除
-nacho delete legacy.setting --config config.yaml
-
-# スキーマに対して検証
-nacho validate --config config.yaml --schema schema.json
 ```
 
 ### リモート
@@ -505,24 +535,52 @@ nacho delete legacy.setting \
   --revision 4
 ```
 
-## Docker
-
-Nacho は、REST API サーバーを実行する小さな Alpine ベースのイメージをビルドする、マルチステージの `Dockerfile` を同梱しています。
+### ローカル構成
 
 ```bash
+# テンプレートから新しい構成を作成
+nacho init config.yaml --template default
+
+# 利用可能なテンプレート: empty、default、web-app、api-service、microservice
+
+# 読み取り
+nacho get database.host --config config.yaml
+nacho get --config config.yaml --format json
+
+# 書き込み
+nacho set database.port 5432 --config config.yaml
+
+# 削除
+nacho delete legacy.setting --config config.yaml
+
+# スキーマに対して検証
+nacho validate --config config.yaml --schema schema.json
+```
+
+## Docker
+
+Nacho は、構成サーバーを実行する小さな Alpine ベースのイメージをビルドする、マルチステージの `Dockerfile` を同梱しています。公開済みイメージは Docker Hub と GHCR から取得できます:
+
+```bash
+# Docker Hub から取得
+docker pull k3scat/nacho:latest
+
+# GitHub Container Registry から取得
+docker pull ghcr.io/nya-foundation/nacho:latest
+
 # イメージをビルド
 docker build -t nacho .
 
 # サーバーを実行（UI は http://localhost:8000/ui）
-docker run -p 8000:8000 nacho
+docker run -p 8000:8000 k3scat/nacho:latest
 
 # 認証を有効にして実行
-docker run -p 8000:8000 nacho \
-  nacho server --config config.yaml --api-key "secure-key"
+docker run -p 8000:8000 ghcr.io/nya-foundation/nacho:latest \
+  server --config config.yaml --api-key "secure-key"
 
 # デフォルトアプリ用に独自の構成をマウント
 docker run -p 8000:8000 \
-  -v "$(pwd)/config.yaml:/app/config.yaml" nacho
+  -v "$(pwd)/config.yaml:/app/config.yaml" k3scat/nacho:latest
 ```
 
 または `docker-compose` を使用:

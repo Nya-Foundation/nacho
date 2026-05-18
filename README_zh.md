@@ -3,14 +3,14 @@
 <div align="center">
 
 <pre>
- _   _     _      ____  _   _   ___  
-| \ | |   / \    / ___|| | | | / _ \ 
+ _   _     _      ____  _   _   ___
+| \ | |   / \    / ___|| | | | / _ \
 |  \| |  / _ \  | |    | |_| || | | |
 | |\  | / ___ \ | |___ |  _  || |_| |
-|_| \_|/_/   \_\ \____||_| |_| \___/ 
+|_| \_|/_/   \_\ \____||_| |_| \___/
 </pre>
 
-  <h3>面向 Python 的轻量级、schema 优先的动态配置服务。</h3>
+  <h3>面向 Python 的轻量级、自托管动态配置服务。</h3>
 
   <p>
     <a href="README.md">English</a> |
@@ -38,18 +38,19 @@
 
 ## 什么是 Nacho？
 
-Nacho 是面向 Python 应用的 schema 优先动态配置服务。
-它支持 YAML、JSON 和 TOML 配置文件，并在本地文件、内存字典和远程配置服务器之间提供一致的 API。
+Nacho 是面向 Python 的轻量级、自托管配置**服务**。
+
+运行一个 Nacho 服务器，用几行代码让你的服务连接到它，然后推送配置变更——这些变更会**实时**到达各个服务，无需重新部署、无需重启。每一次变更在写入存储前都会按 JSON Schema 校验，内置的 Web UI 让你统一管理这一切。当你不需要服务器时，同一个库也能以独立模式直接读写本地文件。
 
 | 特性 | 说明 |
 |---|---|
-| **多格式支持** | 通过统一的 API 读写 YAML、JSON 和 TOML。 |
-| **Schema 优先校验** | 对每次写入按 JSON Schema 校验——无效数据在进入存储之前即被拒绝。 |
-| **事件系统** | 注册处理器，在特定配置变更时触发，以点号路径模式作为键。 |
-| **环境变量覆盖** | 在运行时叠加环境变量，且不会写回存储。 |
-| **远程配置** | 连接到 Nacho API 服务器，实现集中式配置与可选的 WebSocket 推送。 |
-| **线程安全** | 所有读写操作均由可重入锁保护。 |
-| **可插拔存储** | 在文件、内存或远程后端之间切换，无需更改应用代码。 |
+| **集中式配置服务器** | 运行一个 Nacho 服务器，通过 REST API、CLI 或 Web UI 统一管理每个服务的配置。 |
+| **实时更新** | 客户端通过 WebSocket 订阅，变更发生的瞬间即可看到——无需轮询、无需重启。 |
+| **Schema 优先校验** | 每次写入都按 JSON Schema 检查；无效数据在进入存储之前即被拒绝。 |
+| **即插即用的 Python 客户端** | `RemoteStorageBackend` 让远程应用拥有与本地文件完全相同的 API——只需替换存储，其余代码无需改动。 |
+| **内置管理 UI** | 通过服务器自身托管的单文件 Web UI，以 JSON、YAML 或 TOML 创建应用、编辑配置或 schema。 |
+| **多格式** | JSON、YAML 和 TOML 无处不在：API 负载、存储文件以及 UI 编辑器。 |
+| **独立模式** | 无需服务器——让 Nacho 指向本地文件或内存字典，作为普通配置库使用。 |
 
 ## 前置条件
 
@@ -61,17 +62,17 @@ Nacho 是面向 Python 应用的 schema 优先动态配置服务。
 Nacho 使用可选的 extras，以保持核心依赖的精简。
 
 ```bash
-# 核心——仅本地文件管理
-pip install nacho-python
-
-# 含 Web 服务器和 REST API
+# 运行配置服务器
 pip install nacho-python[server]
+
+# 将服务连接到服务器（远程客户端）
+pip install nacho-python[remote]
+
+# 核心——仅独立的本地文件管理
+pip install nacho-python
 
 # 含 JSON Schema 校验
 pip install nacho-python[schema]
-
-# 含远程客户端
-pip install nacho-python[remote]
 
 # 全部功能
 pip install nacho-python[all]
@@ -82,222 +83,58 @@ pip install nacho-python[dev]
 
 | Extra | 依赖 | 用途 |
 |---|---|---|
-| *(无)* | pyyaml, tomli-w | 本地文件读写（YAML、JSON、TOML） |
-| `server` | fastapi, uvicorn, websockets | REST API 与 WebSocket 监听服务器 |
-| `schema` | jsonschema, rfc3987 | 写入时进行 JSON Schema 校验 |
+| `server` | fastapi, uvicorn, websockets | REST API 与 WebSocket 配置服务器 |
 | `remote` | requests, websocket-client | 远程配置客户端 |
+| `schema` | jsonschema, rfc3987 | 写入时进行 JSON Schema 校验 |
+| *(无)* | pyyaml, tomli-w | 独立的本地文件读写（YAML、JSON、TOML） |
 | `all` | 以上全部 | 完整安装 |
 | `dev` | pytest, httpx, coverage | 开发与测试 |
 
 ## 快速开始
 
-```python
-from nacho import Nacho
-
-# 基于文件的配置（文件不存在时会自动创建）
-config = Nacho("config.yaml", events=True)
-
-# 注册一个处理器，当 "database" 下任意键变更时触发
-@config.on_change("database.*")
-def on_db_change(path, old_value, new_value, **kwargs):
-    print(f"{path}: {old_value} -> {new_value}")
-
-# 使用点号路径键读取值
-host = config.get("database.host", default="localhost")
-port = config.get_int("database.port", default=5432)
-
-# 写入值——会触发已注册的处理器
-config.set("database.pool_size", 10)
-
-# 持久化到磁盘
-config.save()
-```
-
-## 配置管理
-
-Nacho 接受文件路径、字典或显式的存储后端。
-
-```python
-from nacho import Nacho
-
-# 带初始数据的内存配置
-config = Nacho({"database": {"host": "127.0.0.1", "port": 5432}})
-
-# 基于文件的配置
-config = Nacho("config.yaml")
-
-# 带类型转换的读取
-host    = config.get("database.host")            # str
-port    = config.get_int("database.port")        # int
-debug   = config.get_bool("app.debug")           # bool
-tags    = config.get_list("app.tags")            # list
-options = config.get_dict("app.options")         # dict
-
-# 深度合并额外的键（不会移除已有的键）
-config.update({"logging": {"level": "DEBUG"}})
-
-# 替换整个配置
-config.replace({"database": {"host": "prod-db", "port": 5432}})
-
-# 删除一个键
-config.delete("legacy.setting")
-
-# 从存储重新加载并重新应用环境变量覆盖
-config.reload()
-
-# 将当前配置导出为 JSON 字符串
-print(config.json())
-```
-
-### 原子事务
-
-将多次写入组合为单个原子操作。代码块正常退出时事务提交；发生任何异常时事务被丢弃。
-
-```python
-with config.transaction() as txn:
-    txn.set("database.host", "new-host")
-    txn.set("database.port", 5433)
-# 处理器在此处携带聚合后的变更触发一次
-config.save()
-```
-
-## 环境变量覆盖
-
-传入 `env_prefix` 可在加载时将环境变量叠加到配置之上。变量名遵循 `{PREFIX}_{NESTED_KEY}` 模式，嵌套层级以分隔符（默认：`_`）分隔。
+**1. 运行一个 Nacho 服务器**
 
 ```bash
-export MYAPP_DATABASE_HOST=prod-db.example.com
-export MYAPP_DATABASE_PORT=5433
-export MYAPP_FEATURES_ENABLED=true
+pip install nacho-python[server]
+nacho server --config config.yaml --api-key "secure-key"
 ```
 
-```python
-config = Nacho(
-    "config.yaml",
-    env_prefix="MYAPP",
-    env_delimiter="_",
-)
+服务器现在运行于 `http://localhost:8000`——提供 REST API、WebSocket 推送，以及位于 `/ui` 的内置管理 UI。
 
-config.get("database.host")      # "prod-db.example.com"
-config.get_int("database.port")  # 5433
-config.get_bool("features.enabled")  # True
+**2. 让你的服务连接到它**
+
+```bash
+pip install nacho-python[remote]
 ```
-
-环境变量的值在可能时会被转换为 bool、int、float 或 JSON 对象，否则回退为字符串。环境变量覆盖仅在运行时叠加：`save()` 持久化的是已存储的配置，而非叠加环境变量后的有效值。
-
-## 事件系统
-
-事件系统会在每次成功写入后派发变更通知。事件携带变更的路径、旧值、新值和事件类型。
-
-```python
-from nacho import Nacho, EventType
-
-config = Nacho("config.yaml", events=True)
-
-# 对 "database" 下任意键的变更触发
-@config.on_change("database.*")
-def on_db_change(path, old_value, new_value, **kwargs):
-    print(f"database key changed: {path}")
-
-# 每次写入操作触发一次（聚合事件），无论变更了哪个键
-@config.on_change("@global")
-def on_any_change(**kwargs):
-    print("config was modified")
-
-# 对 "cache" 下的 CREATE 或 UPDATE 事件触发
-@config.on_event([EventType.CREATE, EventType.UPDATE], path_pattern="cache.*")
-def on_cache_change(event_type, path, new_value, **kwargs):
-    print(f"{event_type.name} {path} = {new_value}")
-
-config.set("database.host", "new-host")  # 触发 on_db_change、on_any_change
-config.set("cache.ttl", 600)             # 触发 on_cache_change（CREATE）
-config.set("cache.ttl", 300)             # 触发 on_cache_change（UPDATE）
-```
-
-**路径模式参考：**
-
-| 模式 | 触发时机 |
-|---|---|
-| `None`（默认） | 任意路径上的任意变更 |
-| `"@global"` | 每次写入操作触发一次（聚合） |
-| `"*"` | 任意按键事件（非聚合） |
-| `"database.*"` | `database` 下嵌套的任意键 |
-
-处理器可以是同步或异步的。异步处理器在存在运行中的事件循环时被调度到该循环上，否则通过 `asyncio.run()` 运行。
-
-## Schema 校验
-
-Nacho 在每次写入时强制执行 schema。无效的值会在变更应用之前立即抛出 `ValidationError`——配置永远不会处于无效状态。
-
-需要 `pip install nacho-python[schema]`。
-
-```json
-// schema.json
-{
-    "type": "object",
-    "properties": {
-        "database": {
-            "type": "object",
-            "required": ["host", "port"],
-            "properties": {
-                "host": {"type": "string"},
-                "port": {"type": "integer", "minimum": 1024}
-            }
-        }
-    },
-    "required": ["database"]
-}
-```
-
-```python
-from nacho import Nacho, ValidationError
-
-config = Nacho("config.yaml", schema="schema.json")
-
-# 无效写入会立即抛出异常——配置不会被修改
-try:
-    config.set("database.port", "not-a-number")
-except ValidationError as e:
-    print(e.errors)  # 违规信息字符串列表
-
-# 在不写入的情况下，对照 schema 检查当前配置
-errors = config.validate()
-if errors:
-    print("Current config has violations:", errors)
-
-# 对照 schema 校验任意字典
-errors = config.check({"database": {"host": "localhost", "port": 80}})
-print(errors)  # ["port must be >= 1024"]
-```
-
-## 远程配置
-
-连接到 Nacho 服务器，并可选择通过 WebSocket 接收实时更新。客户端通过 REST API 写入；服务器可通过 WebSocket 将变更推送回来。
-
-需要 `pip install nacho-python[remote]`。
 
 ```python
 from nacho import Nacho, RemoteStorageBackend
 
-storage = RemoteStorageBackend(
-    url="https://config-server.example.com",
-    app_name="my-service",
-    api_key="secure-key",
-    watch=True,  # 选择启用 WebSocket 更新
+config = Nacho(
+    storage=RemoteStorageBackend(
+        url="http://localhost:8000",
+        app_name="my-service",
+        api_key="secure-key",
+        watch=True,           # 通过 WebSocket 接收实时更新
+    ),
+    events=True,
 )
 
-config = Nacho(storage=storage, events=True)
+# 像本地字典一样读取配置
+port = config.get_int("server.port", default=8000)
 
-# API 与基于文件的用法完全一致
-host = config.get("database.host")
-
-# 处理器在服务器推送的变更上触发
+# 当有人在服务器上修改它时立即响应
 @config.on_change("features.*")
-def on_feature_change(path, new_value, **kwargs):
-    print(f"feature flag updated: {path} = {new_value}")
+def on_flag_change(path, new_value, **kwargs):
+    print(f"{path} is now {new_value}")
 ```
 
-## REST API 服务器
+无论从 UI、CLI 还是 API 修改某个值——每个已连接的客户端都会立即看到。
+
+> **不需要服务器？** Nacho 也可以作为独立的、基于文件的库使用：
+> `config = Nacho("config.yaml")`。参见[独立的文件存储用法](#独立的文件存储用法)。
+
+## 运行 Nacho 服务器
 
 `NachoOrchestrator` 将一个或多个 `Nacho` 实例封装到 FastAPI 应用中。
 该服务器以 API 为先：使用 `/docs` 查看交互式 OpenAPI 文档，`/ws/{app}` 获取实时配置更新，`/ui` 访问内置的管理界面。
@@ -318,6 +155,8 @@ server = NachoOrchestrator(
 )
 server.run(host="0.0.0.0", port=8000)
 ```
+
+启动服务器最简单的方式是使用 CLI——参见[命令行界面](#命令行界面)。
 
 ### 管理 UI
 
@@ -432,6 +271,214 @@ curl -X PUT http://localhost:8000/api/apps/my-service/config/cache.ttl \
 |---|---|---|
 | `/ws/{app}` | WebSocket | 接收配置变更事件 |
 
+## 远程客户端
+
+远程客户端连接到 Nacho 服务器，并可选择通过 WebSocket 接收实时更新。客户端通过 REST API 写入；服务器通过 WebSocket 将变更推送回来。一旦构造完成，基于远程后端的 `Nacho` 实例的行为与基于文件的实例**完全一致**——相同的 `get`、`set`、`on_change` 和 schema API。
+
+需要 `pip install nacho-python[remote]`。
+
+```text
+                 REST reads/writes
+  +-------------+  GET/PUT/PATCH/DELETE   +----------------------+
+  | Python app  | -----------------------> | Nacho server         |
+  | Nacho       |                          | REST API + Web UI    |
+  | Remote      | <----------------------- | File/dict storage    |
+  | client      |    WebSocket pushes      | Schema validation    |
+  +-------------+       /ws/{app}          +----------------------+
+         |                                             ^
+         | on_change handlers                          |
+         +---------------------------------------------+
+                    live config updates
+```
+
+```python
+from nacho import Nacho, RemoteStorageBackend
+
+storage = RemoteStorageBackend(
+    url="https://config-server.example.com",
+    app_name="my-service",
+    api_key="secure-key",
+    watch=True,  # 选择启用 WebSocket 更新
+)
+
+config = Nacho(storage=storage, events=True)
+
+# API 与基于文件的用法完全一致
+host = config.get("database.host")
+
+# 处理器在服务器推送的变更上触发
+@config.on_change("features.*")
+def on_feature_change(path, new_value, **kwargs):
+    print(f"feature flag updated: {path} = {new_value}")
+```
+
+你也可以完全不使用 SDK，直接从[命令行](#远程)访问服务器：
+
+```bash
+nacho get database.host --remote http://config-server:8000 --app-name my-service
+```
+
+## 事件系统
+
+事件系统会在每次成功写入后派发变更通知——无论变更是在本地发生的，还是**从 Nacho 服务器推送而来的**。事件携带变更的路径、旧值、新值和事件类型。
+
+```python
+from nacho import Nacho, EventType
+
+config = Nacho("config.yaml", events=True)
+
+# 对 "database" 下任意键的变更触发
+@config.on_change("database.*")
+def on_db_change(path, old_value, new_value, **kwargs):
+    print(f"database key changed: {path}")
+
+# 每次写入操作触发一次（聚合事件），无论变更了哪个键
+@config.on_change("@global")
+def on_any_change(**kwargs):
+    print("config was modified")
+
+# 对 "cache" 下的 CREATE 或 UPDATE 事件触发
+@config.on_event([EventType.CREATE, EventType.UPDATE], path_pattern="cache.*")
+def on_cache_change(event_type, path, new_value, **kwargs):
+    print(f"{event_type.name} {path} = {new_value}")
+
+config.set("database.host", "new-host")  # 触发 on_db_change、on_any_change
+config.set("cache.ttl", 600)             # 触发 on_cache_change（CREATE）
+config.set("cache.ttl", 300)             # 触发 on_cache_change（UPDATE）
+```
+
+**路径模式参考：**
+
+| 模式 | 触发时机 |
+|---|---|
+| `None`（默认） | 任意路径上的任意变更 |
+| `"@global"` | 每次写入操作触发一次（聚合） |
+| `"*"` | 任意按键事件（非聚合） |
+| `"database.*"` | `database` 下嵌套的任意键 |
+
+处理器可以是同步或异步的。异步处理器在存在运行中的事件循环时被调度到该循环上，否则通过 `asyncio.run()` 运行。
+
+## Schema 校验
+
+Nacho 在每次写入时强制执行 schema。无效的值会在变更应用之前立即抛出 `ValidationError`——配置永远不会处于无效状态。这对本地写入和服务器接受的数据同样适用。
+
+需要 `pip install nacho-python[schema]`。
+
+```json
+// schema.json
+{
+    "type": "object",
+    "properties": {
+        "database": {
+            "type": "object",
+            "required": ["host", "port"],
+            "properties": {
+                "host": {"type": "string"},
+                "port": {"type": "integer", "minimum": 1024}
+            }
+        }
+    },
+    "required": ["database"]
+}
+```
+
+```python
+from nacho import Nacho, ValidationError
+
+config = Nacho("config.yaml", schema="schema.json")
+
+# 无效写入会立即抛出异常——配置不会被修改
+try:
+    config.set("database.port", "not-a-number")
+except ValidationError as e:
+    print(e.errors)  # 违规信息字符串列表
+
+# 在不写入的情况下，对照 schema 检查当前配置
+errors = config.validate()
+if errors:
+    print("Current config has violations:", errors)
+
+# 对照 schema 校验任意字典
+errors = config.check({"database": {"host": "localhost", "port": 80}})
+print(errors)  # ["port must be >= 1024"]
+```
+
+## 独立的文件存储用法
+
+Nacho 并不要求一定有服务器。让它指向本地文件（或直接传入一个普通字典），它就能作为一个自包含的配置库使用——非常适合脚本、测试和单进程应用。无论 Nacho 由文件、字典还是远程服务器支撑，下面的内容都同样适用。
+
+### 配置管理
+
+Nacho 接受文件路径、字典或显式的存储后端。
+
+```python
+from nacho import Nacho
+
+# 带初始数据的内存配置
+config = Nacho({"database": {"host": "127.0.0.1", "port": 5432}})
+
+# 基于文件的配置
+config = Nacho("config.yaml")
+
+# 带类型转换的读取
+host    = config.get("database.host")            # str
+port    = config.get_int("database.port")        # int
+debug   = config.get_bool("app.debug")           # bool
+tags    = config.get_list("app.tags")            # list
+options = config.get_dict("app.options")         # dict
+
+# 深度合并额外的键（不会移除已有的键）
+config.update({"logging": {"level": "DEBUG"}})
+
+# 替换整个配置
+config.replace({"database": {"host": "prod-db", "port": 5432}})
+
+# 删除一个键
+config.delete("legacy.setting")
+
+# 从存储重新加载并重新应用环境变量覆盖
+config.reload()
+
+# 将当前配置导出为 JSON 字符串
+print(config.json())
+```
+
+### 原子事务
+
+将多次写入组合为单个原子操作。代码块正常退出时事务提交；发生任何异常时事务被丢弃。
+
+```python
+with config.transaction() as txn:
+    txn.set("database.host", "new-host")
+    txn.set("database.port", 5433)
+# 处理器在此处携带聚合后的变更触发一次
+config.save()
+```
+
+### 环境变量覆盖
+
+传入 `env_prefix` 可在加载时将环境变量叠加到配置之上。变量名遵循 `{PREFIX}_{NESTED_KEY}` 模式，嵌套层级以分隔符（默认：`_`）分隔。
+
+```bash
+export MYAPP_DATABASE_HOST=prod-db.example.com
+export MYAPP_DATABASE_PORT=5433
+export MYAPP_FEATURES_ENABLED=true
+```
+
+```python
+config = Nacho(
+    "config.yaml",
+    env_prefix="MYAPP",
+    env_delimiter="_",
+)
+
+config.get("database.host")      # "prod-db.example.com"
+config.get_int("database.port")  # 5433
+config.get_bool("features.enabled")  # True
+```
+
+环境变量的值在可能时会被转换为 bool、int、float 或 JSON 对象，否则回退为字符串。环境变量覆盖仅在运行时叠加：`save()` 持久化的是已存储的配置，而非叠加环境变量后的有效值。
+
 ## 命令行界面
 
 ```bash
@@ -452,28 +499,6 @@ nacho server \
   --data-dir ".nacho/apps" \
   --event true \
   --read-only false
-```
-
-### 本地配置
-
-```bash
-# 从模板创建新配置
-nacho init config.yaml --template default
-
-# 可用模板：empty、default、web-app、api-service、microservice
-
-# 读取
-nacho get database.host --config config.yaml
-nacho get --config config.yaml --format json
-
-# 写入
-nacho set database.port 5432 --config config.yaml
-
-# 删除
-nacho delete legacy.setting --config config.yaml
-
-# 对照 schema 校验
-nacho validate --config config.yaml --schema schema.json
 ```
 
 ### 远程
@@ -505,24 +530,52 @@ nacho delete legacy.setting \
   --revision 4
 ```
 
-## Docker
-
-Nacho 提供了一个多阶段 `Dockerfile`，构建出运行 REST API 服务器的小型 Alpine 镜像。
+### 本地配置
 
 ```bash
+# 从模板创建新配置
+nacho init config.yaml --template default
+
+# 可用模板：empty、default、web-app、api-service、microservice
+
+# 读取
+nacho get database.host --config config.yaml
+nacho get --config config.yaml --format json
+
+# 写入
+nacho set database.port 5432 --config config.yaml
+
+# 删除
+nacho delete legacy.setting --config config.yaml
+
+# 对照 schema 校验
+nacho validate --config config.yaml --schema schema.json
+```
+
+## Docker
+
+Nacho 提供了一个多阶段 `Dockerfile`，构建出运行配置服务器的小型 Alpine 镜像。已发布的镜像可从 Docker Hub 和 GHCR 获取：
+
+```bash
+# 从 Docker Hub 拉取
+docker pull k3scat/nacho:latest
+
+# 从 GitHub Container Registry 拉取
+docker pull ghcr.io/nya-foundation/nacho:latest
+
 # 构建镜像
 docker build -t nacho .
 
 # 运行服务器（UI 位于 http://localhost:8000/ui）
-docker run -p 8000:8000 nacho
+docker run -p 8000:8000 k3scat/nacho:latest
 
 # 启用认证运行
-docker run -p 8000:8000 nacho \
-  nacho server --config config.yaml --api-key "secure-key"
+docker run -p 8000:8000 ghcr.io/nya-foundation/nacho:latest \
+  server --config config.yaml --api-key "secure-key"
 
 # 为默认应用挂载你自己的配置
 docker run -p 8000:8000 \
-  -v "$(pwd)/config.yaml:/app/config.yaml" nacho
+  -v "$(pwd)/config.yaml:/app/config.yaml" k3scat/nacho:latest
 ```
 
 或使用 `docker-compose`：

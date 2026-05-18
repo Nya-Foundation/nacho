@@ -22,11 +22,11 @@ from nacho.utils.io import save_file
 LOGGER = logging.getLogger("nacho.cli")
 
 BANNER = r"""
- _   _     _      ____  _   _   ___
-| \ | |   / \    / ___|| | | | / _ \
-|  \| |  / _ \  | |    | |_| || | | |
-| |\  | / ___ \ | |___ |  _  || |_| |
-|_| \_|/_/   \_\ \____||_| |_| \___/
+            _   _     _      ____  _   _   ___
+           | \ | |   / \    / ___|| | | | / _ \
+           |  \| |  / _ \  | |    | |_| || | | |
+           | |\  | / ___ \ | |___ |  _  || |_| |
+           |_| \_|/_/   \_\ \____||_| |_| \___/
 """
 
 
@@ -34,7 +34,7 @@ def banner() -> str:
     """Return the ASCII banner with a version tagline."""
     return (
         f"{BANNER}"
-        f"  Lightweight, schema-first dynamic configuration  ·  v{__version__}\n"
+        f"  Lightweight, self-hosted dynamic configuration  ·  v{__version__}\n"
     )
 
 
