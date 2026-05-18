@@ -19,7 +19,7 @@ try:
     from jsonschema import validators as _jv
 
     HAS_SCHEMA_DEPS = True
-except ImportError:
+except ImportError:  # pragma: no cover - optional 'schema' extra not installed
     HAS_SCHEMA_DEPS = False
 
 
@@ -108,13 +108,13 @@ class SchemaValidator:
                 import yaml
 
                 return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            except ImportError:
+            except ImportError:  # pragma: no cover - pyyaml is a core dependency
                 raise ImportError("YAML schema files require 'pyyaml'.")
 
         if suffix == ".toml":
             try:
                 import tomllib  # type: ignore
-            except ImportError:
+            except ImportError:  # pragma: no cover - Python < 3.11 fallback
                 import tomli as tomllib  # type: ignore
             return tomllib.loads(path.read_text(encoding="utf-8")) or {}
 

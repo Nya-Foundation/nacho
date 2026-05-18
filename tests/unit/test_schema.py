@@ -63,3 +63,32 @@ class TestSchemaValidator:
     def test_invalid_schema_type_raises(self):
         with pytest.raises(TypeError):
             SchemaValidator(42)
+
+    def test_load_from_yaml_file(self, tmp_path):
+        p = tmp_path / "schema.yaml"
+        p.write_text("type: object\nrequired: [host]\n")
+        v = SchemaValidator(p)
+        v.validate({"host": "x"})
+        with pytest.raises(ValidationError):
+            v.validate({})
+
+    def test_load_from_toml_file(self, tmp_path):
+        p = tmp_path / "schema.toml"
+        p.write_text('type = "object"\n')
+        v = SchemaValidator(p)
+        v.validate({"anything": True})
+
+    def test_unsupported_schema_extension_raises(self, tmp_path):
+        p = tmp_path / "schema.xml"
+        p.write_text("<schema/>")
+        with pytest.raises(ValueError, match="Unsupported schema file format"):
+            SchemaValidator(p)
+
+    def test_nested_anyof_errors_include_context(self):
+        # anyOf failures surface as context sub-errors.
+        schema = {
+            "type": "object",
+            "properties": {"v": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
+        }
+        errors = SchemaValidator(schema).check({"v": 3.5})
+        assert any(error.startswith("  ") for error in errors)

@@ -18,6 +18,7 @@ from nacho.config import Nacho
 from nacho.schema import ValidationError
 from nacho.server.auth import AuthGuard, AuthMiddleware
 from nacho.utils.io import dump_string, load_string
+from nacho.utils.path import get_nested_value
 
 from .models import (
     AppCreateRequest,
@@ -283,8 +284,11 @@ class NachoOrchestrator:
         @self.app.get("/api/apps/{app_name}/config/{path:path}")
         async def get_path(app_name: str, path: str) -> Dict[str, Any]:
             app = self._get_app(app_name)
+            # Resolve against the snapshot directly: Nacho.get() deep-copies its
+            # result, so an identity-sentinel passed to it would never compare
+            # equal — get_nested_value preserves the sentinel by identity.
             missing = object()
-            value = app.config.get(path, missing)
+            value = get_nested_value(app.config.get_all(), path, missing)
             if value is missing:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -510,6 +514,8 @@ class NachoOrchestrator:
                 detail="Server is in read-only mode",
             )
 
-    def run(self, host: str = "0.0.0.0", port: int = 8000, reload: bool = False) -> None:
+    def run(  # pragma: no cover - thin uvicorn wrapper, exercised via the CLI
+        self, host: str = "0.0.0.0", port: int = 8000, reload: bool = False
+    ) -> None:
         config = uvicorn.Config(app=self.app, host=host, port=port, reload=reload)
         uvicorn.Server(config).run()

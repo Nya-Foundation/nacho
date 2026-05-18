@@ -7,7 +7,7 @@ try:
 
     HAS_REMOTE_DEPS = True
     from .remote import RemoteStorageBackend
-except ImportError:
+except ImportError:  # pragma: no cover - optional 'remote' extra not installed
     HAS_REMOTE_DEPS = False
 
     class RemoteStorageBackend:  # type: ignore[no-redef]

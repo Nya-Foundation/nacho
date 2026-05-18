@@ -13,14 +13,14 @@ from .storage import (
 
 try:
     from .storage import RemoteStorageBackend
-except ImportError:
+except ImportError:  # pragma: no cover - optional 'remote' extra not installed
     pass
 
 try:
     from .server.app import NachoOrchestrator
 
     HAS_SERVER_DEPS = True
-except ImportError:
+except ImportError:  # pragma: no cover - optional 'server' extra not installed
     HAS_SERVER_DEPS = False
 
 __all__ = [

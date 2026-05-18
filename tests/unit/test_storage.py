@@ -59,6 +59,13 @@ class TestFileStorageBackend:
         backend = FileStorageBackend(p)
         assert backend.load() == {}
 
+    def test_load_raises_storage_error_on_corrupt_file(self, tmp_path):
+        p = tmp_path / "broken.yaml"
+        p.write_text(": : not : valid : :")
+        backend = FileStorageBackend(p)
+        with pytest.raises(StorageError):
+            backend.load()
+
 
 class TestRemoteStorageBackend:
     def test_auto_connect_can_be_disabled(self):

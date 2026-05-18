@@ -108,7 +108,7 @@ python_files = "test_*.py"
 # Default run: fast tests only. Heavier suites are opt-in, e.g.
 #   pytest -m integration      pytest -m e2e      pytest -m docker
 #   pytest -m ""               (run everything)
-addopts = '-m "not integration and not e2e and not docker" --cov=nacho --cov-report=term-missing --strict-markers'
+addopts = '-m "not integration and not e2e and not docker" --cov=nacho --cov-report=term-missing --cov-fail-under=95 --strict-markers'
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "unit: fast tests with no external dependencies",

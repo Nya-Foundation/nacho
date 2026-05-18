@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nacho.utils.io import load_file, load_string, save_file
+from nacho.utils.io import dump_string, load_file, load_string, save_file
 
 
 class TestLoadFile:
@@ -58,6 +58,44 @@ class TestSaveFile:
         assert p.exists()
 
 
+    def test_unknown_extension_is_parsed_as_yaml(self, tmp_path):
+        p = tmp_path / "config.conf"
+        p.write_text("key: value\n")
+        assert load_file(p) == {"key": "value"}
+
+    def test_unknown_extension_is_written_as_yaml(self, tmp_path):
+        p = tmp_path / "out.conf"
+        save_file(p, {"x": 1})
+        assert load_file(p) == {"x": 1}
+
+    def test_write_failure_is_wrapped_as_ioerror(self, tmp_path, monkeypatch):
+        import os
+
+        def boom(*a, **k):
+            raise OSError("replace failed")
+
+        monkeypatch.setattr(os, "replace", boom)
+        with pytest.raises(IOError, match="Failed to write"):
+            save_file(tmp_path / "out.json", {"x": 1})
+
+
+class TestCreateFileIfNotExists:
+    def test_creates_file_and_parents(self, tmp_path):
+        from nacho.utils.io import create_file_if_not_exists
+
+        target = tmp_path / "deep" / "dir" / "touched.yaml"
+        create_file_if_not_exists(target)
+        assert target.exists()
+
+    def test_is_noop_when_file_exists(self, tmp_path):
+        from nacho.utils.io import create_file_if_not_exists
+
+        target = tmp_path / "exists.yaml"
+        target.write_text("original")
+        create_file_if_not_exists(target)
+        assert target.read_text() == "original"
+
+
 class TestLoadString:
     def test_json(self):
         assert load_string('{"a": 1}', "json") == {"a": 1}
@@ -65,6 +103,25 @@ class TestLoadString:
     def test_yaml(self):
         assert load_string("a: 1\nb: 2\n", "yaml") == {"a": 1, "b": 2}
 
+    def test_toml(self):
+        assert load_string('x = 1\n', "toml") == {"x": 1}
+
     def test_empty_returns_empty(self):
         assert load_string("", "json") == {}
         assert load_string("   ", "yaml") == {}
+
+
+class TestDumpString:
+    def test_json(self):
+        assert json.loads(dump_string({"a": 1}, "json")) == {"a": 1}
+
+    def test_yaml(self):
+        assert "a: 1" in dump_string({"a": 1}, "yaml")
+
+    def test_toml(self):
+        assert "x = 1" in dump_string({"x": 1}, "toml")
+
+    def test_toml_rejects_unrepresentable_data(self):
+        # TOML has no null type; a None value cannot be serialized.
+        with pytest.raises(ValueError):
+            dump_string({"x": None}, "toml")
