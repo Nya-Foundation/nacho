@@ -1,13 +1,40 @@
-"""Tests for the public CLI command handlers."""
+"""Tests for the Nacho command-line interface.
 
-from argparse import Namespace
+Covers the pure helpers, every ``cmd_*`` handler (local and remote paths),
+the remote HTTP helpers, and ``main_cli`` dispatch. Remote calls are stubbed
+so the suite needs no network or running server.
+"""
 
+import json
+from argparse import ArgumentTypeError, Namespace
+
+import pytest
 import yaml
 
-from nacho.cli.main import cmd_delete, cmd_get, cmd_set, create_config
+from nacho.cli import main as cli
+from nacho.cli.main import (
+    banner,
+    cmd_connect,
+    cmd_delete,
+    cmd_get,
+    cmd_init,
+    cmd_server,
+    cmd_set,
+    cmd_validate,
+    create_config,
+    create_parser,
+    format_output,
+    main_cli,
+    remote_config_url,
+    remote_headers,
+    remote_request_error,
+    str2bool,
+)
 
 
 class FakeResponse:
+    """Minimal stand-in for a ``requests.Response``."""
+
     def __init__(self, status_code=200, payload=None, headers=None, text=""):
         self.status_code = status_code
         self._payload = payload if payload is not None else {}
@@ -15,117 +42,432 @@ class FakeResponse:
         self.text = text
 
     def json(self):
+        if self._payload is _NO_JSON:
+            raise ValueError("no json")
         return self._payload
 
 
+_NO_JSON = object()
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("value", ["yes", "true", "T", "1"])
+def test_str2bool_truthy(value):
+    assert str2bool(value) is True
+
+
+@pytest.mark.parametrize("value", ["no", "false", "F", "0"])
+def test_str2bool_falsy(value):
+    assert str2bool(value) is False
+
+
+def test_str2bool_rejects_garbage():
+    with pytest.raises(ArgumentTypeError):
+        str2bool("maybe")
+
+
+def test_banner_includes_version():
+    from nacho._version import __version__
+
+    text = banner()
+    assert __version__ in text
+    assert "NACHO" not in text  # it is ASCII art, not the literal word
+
+
+def test_format_output_json_and_yaml_and_raw():
+    assert json.loads(format_output({"a": 1}, "json")) == {"a": 1}
+    assert yaml.safe_load(format_output({"a": 1}, "yaml")) == {"a": 1}
+    assert format_output("plain", "raw") == "plain"
+    # raw on a container falls back to indented JSON
+    assert json.loads(format_output({"a": 1}, "raw")) == {"a": 1}
+
+
+def test_remote_headers_with_and_without_key():
+    assert "Authorization" not in remote_headers(None)
+    assert remote_headers("k")["Authorization"] == "Bearer k"
+
+
+def test_remote_config_url_builds_paths():
+    assert remote_config_url("http://h:8000/", "app") == "http://h:8000/api/apps/app/config"
+    assert (
+        remote_config_url("http://h:8000", "app", "a.b")
+        == "http://h:8000/api/apps/app/config/a.b"
+    )
+    # app names are percent-encoded
+    assert "my%2Fsvc" in remote_config_url("http://h", "my/svc")
+
+
+def test_remote_request_error_variants():
+    assert remote_request_error(FakeResponse(payload={"detail": "boom"})) == "boom"
+    assert "x" in remote_request_error(FakeResponse(payload={"x": 1}))
+    assert remote_request_error(FakeResponse(payload=_NO_JSON, text="raw text")) == "raw text"
+
+
+# ---------------------------------------------------------------------------
+# create_parser
+# ---------------------------------------------------------------------------
+def test_create_parser_exposes_all_subcommands():
+    parser = create_parser()
+    assert parser.prog == "nacho"
+    args = parser.parse_args(["get", "some.key", "--config", "c.yaml"])
+    assert args.command == "get" and args.key == "some.key"
+
+
+# ---------------------------------------------------------------------------
+# create_config
+# ---------------------------------------------------------------------------
 def test_create_config_uses_current_nacho_api(tmp_yaml):
     config = create_config(str(tmp_yaml))
     assert config.get("database.host") == "localhost"
 
 
-def test_cmd_get_reads_local_config(tmp_yaml, capsys):
-    args = Namespace(
-        config=str(tmp_yaml),
-        key="database.host",
-        format="raw",
-        remote=None,
-        app_name="default",
-        api_key=None,
-    )
+def test_create_config_remote_builds_remote_backend(monkeypatch):
+    captured = {}
 
+    def fake_backend(url, app_name, api_key):
+        captured.update(url=url, app_name=app_name, api_key=api_key)
+        return {"remote": True}  # Nacho accepts a dict storage
+
+    monkeypatch.setattr("nacho.storage.remote.RemoteStorageBackend", fake_backend)
+    config = create_config(remote_url="http://h:8000", remote_app_name="svc", api_key="k")
+    assert config.get("remote") is True
+    assert captured == {"url": "http://h:8000", "app_name": "svc", "api_key": "k"}
+
+
+# ---------------------------------------------------------------------------
+# cmd_get / cmd_set / cmd_delete — local
+# ---------------------------------------------------------------------------
+def test_cmd_get_reads_local_key(tmp_yaml, capsys):
+    args = Namespace(config=str(tmp_yaml), key="database.host", format="raw",
+                     remote=None, app_name="default", api_key=None)
     assert cmd_get(args) == 0
     assert capsys.readouterr().out.strip() == "localhost"
 
 
+def test_cmd_get_reads_full_local_config(tmp_yaml, capsys):
+    args = Namespace(config=str(tmp_yaml), key=None, format="json",
+                     remote=None, app_name="default", api_key=None)
+    assert cmd_get(args) == 0
+    assert json.loads(capsys.readouterr().out)["database"]["port"] == 5432
+
+
 def test_cmd_set_writes_local_config(tmp_path):
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("database:\n  host: localhost\n", encoding="utf-8")
-
-    args = Namespace(
-        config=str(config_path),
-        schema=None,
-        key="database.port",
-        value="5432",
-        remote=None,
-        app_name="default",
-        api_key=None,
-    )
-
+    path = tmp_path / "c.yaml"
+    path.write_text("database:\n  host: localhost\n", encoding="utf-8")
+    args = Namespace(config=str(path), schema=None, key="database.port", value="5432",
+                     remote=None, app_name="default", api_key=None)
     assert cmd_set(args) == 0
-    assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["database"]["port"] == 5432
+    assert yaml.safe_load(path.read_text())["database"]["port"] == 5432
 
 
-def test_cmd_get_remote_can_show_revision(monkeypatch, capsys):
-    def fake_get(url, headers, timeout):
-        assert url == "http://server/api/apps/svc/config"
-        assert headers["Authorization"] == "Bearer secret"
-        assert timeout == 10
-        return FakeResponse(payload={"x": 1}, headers={"X-Nacho-Revision": "7"})
+def test_cmd_set_local_schema_violation_returns_error(tmp_path, tmp_schema, capsys):
+    path = tmp_path / "c.yaml"
+    path.write_text("database:\n  host: localhost\n  port: 5432\n", encoding="utf-8")
+    args = Namespace(config=str(path), schema=str(tmp_schema), key="database.port",
+                     value="not-an-int", remote=None, app_name="default", api_key=None)
+    assert cmd_set(args) == 1
+    assert "Error:" in capsys.readouterr().out
 
+
+def test_cmd_delete_local_found_and_missing(tmp_yaml, capsys):
+    found = Namespace(config=str(tmp_yaml), schema=None, key="database.host",
+                      remote=None, app_name="default", api_key=None)
+    assert cmd_delete(found) == 0
+    assert "Deleted" in capsys.readouterr().out
+
+    missing = Namespace(config=str(tmp_yaml), schema=None, key="nope.gone",
+                        remote=None, app_name="default", api_key=None)
+    assert cmd_delete(missing) == 0
+    assert "not found" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# cmd_get / cmd_set / cmd_delete — remote
+# ---------------------------------------------------------------------------
+def test_cmd_get_remote_shows_revision(monkeypatch, capsys):
     import requests
 
-    monkeypatch.setattr(requests, "get", fake_get)
-    args = Namespace(
-        config="config.yaml",
-        key=None,
-        format="json",
-        remote="http://server",
-        app_name="svc",
-        api_key="secret",
-        show_revision=True,
-    )
-
+    monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(
+        payload={"x": 1}, headers={"X-Nacho-Revision": "7"}))
+    args = Namespace(config="c.yaml", key=None, format="json", remote="http://s",
+                     app_name="svc", api_key="secret", show_revision=True)
     assert cmd_get(args) == 0
     assert '"revision": 7' in capsys.readouterr().out
 
 
-def test_cmd_set_remote_sends_revision(monkeypatch, capsys):
-    captured = {}
-
-    def fake_put(url, json, headers, timeout):
-        captured.update({"url": url, "json": json, "headers": headers, "timeout": timeout})
-        return FakeResponse(payload={"revision": 8})
-
+def test_cmd_get_remote_error_status_returns_1(monkeypatch, capsys):
     import requests
 
-    monkeypatch.setattr(requests, "put", fake_put)
-    args = Namespace(
-        config="config.yaml",
-        schema=None,
-        key="feature.enabled",
-        value="true",
-        remote="http://server",
-        app_name="svc",
-        api_key="secret",
-        revision=7,
-    )
+    monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(
+        status_code=500, payload={"detail": "kaboom"}))
+    args = Namespace(config="c.yaml", key="k", format="raw", remote="http://s",
+                     app_name="svc", api_key=None, show_revision=False)
+    assert cmd_get(args) == 1
+    assert "kaboom" in capsys.readouterr().out
 
+
+def test_cmd_set_remote_sends_revision(monkeypatch, capsys):
+    captured = {}
+    import requests
+
+    def fake_put(url, json, headers, timeout):
+        captured.update(url=url, json=json)
+        return FakeResponse(payload={"revision": 8})
+
+    monkeypatch.setattr(requests, "put", fake_put)
+    args = Namespace(config="c.yaml", schema=None, key="feature.enabled", value="true",
+                     remote="http://s", app_name="svc", api_key="secret", revision=7)
     assert cmd_set(args) == 0
-    assert captured["url"] == "http://server/api/apps/svc/config/feature.enabled"
     assert captured["json"] == {"value": True, "type": "raw", "revision": 7}
     assert "revision 8" in capsys.readouterr().out
 
 
-def test_cmd_delete_remote_reports_conflict(monkeypatch, capsys):
-    def fake_delete(url, params, headers, timeout):
-        assert params == {"revision": 2}
-        return FakeResponse(
-            status_code=409,
-            payload={"detail": {"error": "revision_conflict", "expected": 2, "actual": 3}},
-        )
-
+def test_cmd_set_remote_error_returns_1(monkeypatch, capsys):
     import requests
 
-    monkeypatch.setattr(requests, "delete", fake_delete)
-    args = Namespace(
-        config="config.yaml",
-        schema=None,
-        key="old.setting",
-        remote="http://server",
-        app_name="svc",
-        api_key="secret",
-        revision=2,
-    )
+    monkeypatch.setattr(requests, "put", lambda *a, **k: FakeResponse(
+        status_code=400, payload={"detail": "bad"}))
+    args = Namespace(config="c.yaml", schema=None, key="k", value="1", remote="http://s",
+                     app_name="svc", api_key=None, revision=None)
+    assert cmd_set(args) == 1
+    assert "bad" in capsys.readouterr().out
 
+
+def test_cmd_get_remote_single_key(monkeypatch, capsys):
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(payload={"value": 42}))
+    args = Namespace(config="c.yaml", key="answer", format="raw", remote="http://s",
+                     app_name="svc", api_key=None, show_revision=False)
+    assert cmd_get(args) == 0
+    assert capsys.readouterr().out.strip() == "42"
+
+
+def test_cmd_set_remote_without_deps(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "HAS_REMOTE_DEPS", False)
+    args = Namespace(config="c.yaml", schema=None, key="k", value="1", remote="http://s",
+                     app_name="svc", api_key=None, revision=None)
+    assert cmd_set(args) == 1
+    assert "Remote connection requires" in capsys.readouterr().out
+
+
+def test_cmd_delete_remote_without_deps(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "HAS_REMOTE_DEPS", False)
+    args = Namespace(config="c.yaml", schema=None, key="k", remote="http://s",
+                     app_name="svc", api_key=None, revision=None)
+    assert cmd_delete(args) == 1
+    assert "Remote connection requires" in capsys.readouterr().out
+
+
+def test_cmd_delete_local_handles_exception(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise RuntimeError("backend down")
+
+    monkeypatch.setattr(cli, "create_config", boom)
+    args = Namespace(config="c.yaml", schema=None, key="k", remote=None,
+                     app_name="default", api_key=None)
+    assert cmd_delete(args) == 1
+    assert "Error: backend down" in capsys.readouterr().out
+
+
+def test_cmd_connect_handles_exception(monkeypatch, capsys):
+    class FakeConfig:
+        def get_all(self):
+            raise RuntimeError("unreachable")
+
+    monkeypatch.setattr(cli, "create_config", lambda **k: FakeConfig())
+    args = Namespace(remote="http://s", app_name="svc", api_key=None, format="json")
+    assert cmd_connect(args) == 1
+    assert "Error: unreachable" in capsys.readouterr().out
+
+
+def test_cmd_delete_remote_success(monkeypatch, capsys):
+    import requests
+
+    monkeypatch.setattr(requests, "delete", lambda *a, **k: FakeResponse(
+        payload={"revision": 4}))
+    args = Namespace(config="c.yaml", schema=None, key="old", remote="http://s",
+                     app_name="svc", api_key=None, revision=None)
+    assert cmd_delete(args) == 0
+    assert "Deleted old" in capsys.readouterr().out
+
+
+def test_cmd_delete_remote_reports_conflict(monkeypatch, capsys):
+    import requests
+
+    def fake_delete(url, params, headers, timeout):
+        assert params == {"revision": 2}
+        return FakeResponse(status_code=409,
+                            payload={"detail": {"error": "revision_conflict"}})
+
+    monkeypatch.setattr(requests, "delete", fake_delete)
+    args = Namespace(config="c.yaml", schema=None, key="old", remote="http://s",
+                     app_name="svc", api_key="secret", revision=2)
     assert cmd_delete(args) == 1
     assert "revision_conflict" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# cmd_validate
+# ---------------------------------------------------------------------------
+def test_cmd_validate_success(tmp_yaml, tmp_schema, capsys):
+    args = Namespace(config=str(tmp_yaml), schema=str(tmp_schema),
+                     remote=None, app_name="default", api_key=None)
+    assert cmd_validate(args) == 0
+    assert "successful" in capsys.readouterr().out
+
+
+def test_cmd_validate_rejects_invalid_config(tmp_path, tmp_schema, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("database:\n  host: localhost\n", encoding="utf-8")  # missing port
+    args = Namespace(config=str(bad), schema=str(tmp_schema),
+                     remote=None, app_name="default", api_key=None)
+    assert cmd_validate(args) == 1
+    assert "Error:" in capsys.readouterr().out
+
+
+def test_cmd_validate_lists_validation_errors(monkeypatch, capsys):
+    class FakeConfig:
+        def validate(self):
+            return ["database.port: out of range", "app.name: too short"]
+
+    monkeypatch.setattr(cli, "create_config", lambda *a, **k: FakeConfig())
+    args = Namespace(config="c.yaml", schema="s.json", remote=None,
+                     app_name="default", api_key=None)
+    assert cmd_validate(args) == 1
+    out = capsys.readouterr().out
+    assert "Validation failed" in out and "out of range" in out
+
+
+def test_cmd_validate_without_schema_deps(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "HAS_SCHEMA_DEPS", False)
+    args = Namespace(config="c.yaml", schema=None, remote=None,
+                     app_name="default", api_key=None)
+    assert cmd_validate(args) == 1
+    assert "Schema validation requires" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# cmd_init
+# ---------------------------------------------------------------------------
+def test_cmd_init_creates_from_template(tmp_path, capsys):
+    target = tmp_path / "new.yaml"
+    assert cmd_init(Namespace(config=str(target), template="web-app")) == 0
+    assert target.exists()
+    assert "app" in yaml.safe_load(target.read_text())
+
+
+def test_cmd_init_refuses_existing_file(tmp_yaml, capsys):
+    assert cmd_init(Namespace(config=str(tmp_yaml), template="default")) == 1
+    assert "already exists" in capsys.readouterr().out
+
+
+def test_cmd_init_warns_on_unknown_template(tmp_path, capsys):
+    target = tmp_path / "x.yaml"
+    assert cmd_init(Namespace(config=str(target), template="bogus")) == 0
+    assert "Unknown template" in capsys.readouterr().out
+
+
+def test_cmd_init_handles_write_error(tmp_path, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli, "save_file", boom)
+    assert cmd_init(Namespace(config=str(tmp_path / "y.yaml"), template="default")) == 1
+    assert "Error:" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# cmd_connect
+# ---------------------------------------------------------------------------
+def test_cmd_connect_requires_remote_url(capsys):
+    args = Namespace(remote=None, app_name="default", api_key=None, format="json")
+    assert cmd_connect(args) == 1
+    assert "Remote URL is required" in capsys.readouterr().out
+
+
+def test_cmd_connect_dumps_remote_config(monkeypatch, capsys):
+    monkeypatch.setattr("nacho.storage.remote.RemoteStorageBackend",
+                        lambda url, app_name, api_key: {"team": "platform"})
+    args = Namespace(remote="http://s", app_name="svc", api_key=None, format="json")
+    assert cmd_connect(args) == 0
+    assert "platform" in capsys.readouterr().out
+
+
+def test_cmd_connect_without_remote_deps(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "HAS_REMOTE_DEPS", False)
+    args = Namespace(remote="http://s", app_name="svc", api_key=None, format="json")
+    assert cmd_connect(args) == 1
+    assert "Remote connection requires" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# cmd_server
+# ---------------------------------------------------------------------------
+class FakeOrchestrator:
+    last = None
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.ran_with = None
+        FakeOrchestrator.last = self
+
+    def run(self, **kwargs):
+        self.ran_with = kwargs
+
+
+def _server_args(**overrides):
+    base = dict(host="0.0.0.0", port=8000, config=None, schema=None, data_dir=None,
+                api_key=None, app_name=None, event=False, read_only=False, reload=False)
+    base.update(overrides)
+    return Namespace(**base)
+
+
+def test_cmd_server_runs_without_a_config(monkeypatch):
+    monkeypatch.setattr(cli, "NachoOrchestrator", FakeOrchestrator)
+    assert cmd_server(_server_args()) == 0
+    assert FakeOrchestrator.last.ran_with["port"] == 8000
+
+
+def test_cmd_server_loads_config_into_an_app(monkeypatch, tmp_yaml):
+    monkeypatch.setattr(cli, "NachoOrchestrator", FakeOrchestrator)
+    assert cmd_server(_server_args(config=str(tmp_yaml), app_name="svc")) == 0
+    assert "svc" in FakeOrchestrator.last.kwargs["apps"]
+
+
+def test_cmd_server_without_server_deps(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "HAS_SERVER_DEPS", False)
+    assert cmd_server(_server_args()) == 1
+    assert "Server features require" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# main_cli dispatch
+# ---------------------------------------------------------------------------
+def test_main_cli_no_command_prints_help(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["nacho"])
+    assert main_cli() == 1
+    assert "usage: nacho" in capsys.readouterr().out
+
+
+def test_main_cli_dispatches_to_handler(monkeypatch, tmp_yaml, capsys):
+    monkeypatch.setattr("sys.argv", ["nacho", "get", "database.host", "--config", str(tmp_yaml)])
+    assert main_cli() == 0
+    assert capsys.readouterr().out.strip() == "localhost"
+
+
+def test_main_cli_init_via_argv(monkeypatch, tmp_path):
+    target = tmp_path / "cfg.yaml"
+    monkeypatch.setattr("sys.argv", ["nacho", "init", str(target), "--template", "empty"])
+    assert main_cli() == 0
+    assert target.exists()
+
+
+def test_cli_package_entrypoint(monkeypatch):
+    """The lazy wrapper in nacho.cli forwards to the real main_cli."""
+    from nacho.cli import main_cli as pkg_main_cli
+
+    monkeypatch.setattr("sys.argv", ["nacho"])
+    assert pkg_main_cli() == 1

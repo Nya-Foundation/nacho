@@ -123,3 +123,32 @@ class TestDeepMerge:
         result = deep_merge(src, dst)
         assert "a" not in dst
         assert "b" not in src
+
+    def test_non_dict_source_replaces_destination(self):
+        assert deep_merge("scalar", {"a": 1}) == "scalar"
+
+
+class TestPathEdgeCases:
+    def test_set_index_into_non_list_fails(self):
+        assert set_nested_value({"a": {}}, "a.0.x", 1) is False
+
+    def test_set_key_into_non_mapping_fails(self):
+        assert set_nested_value({"a": [1, 2]}, "a.b.c", 1) is False
+
+    def test_set_index_extends_list_with_padding(self):
+        data = {"s": []}
+        assert set_nested_value(data, "s[2]", "v") is True
+        assert data["s"] == [None, None, "v"]
+
+    def test_set_string_key_on_a_list_fails(self):
+        assert set_nested_value({"s": []}, "s.key", "v") is False
+
+    def test_delete_list_element_by_index(self):
+        data = {"s": [1, 2, 3]}
+        ok, old = delete_nested_value(data, "s[1]")
+        assert ok is True and old == 2
+        assert data["s"] == [1, 3]
+
+    def test_delete_missing_nested_key(self):
+        ok, old = delete_nested_value({"a": {"b": 1}}, "a.c")
+        assert ok is False and old is None

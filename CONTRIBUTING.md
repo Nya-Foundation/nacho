@@ -111,15 +111,18 @@ The default run executes only the fast suites (`unit` + `smoke`). The heavier
 suites are opt-in:
 
 ```bash
-uv run pytest                  # fast suites — run these on every change
-uv run pytest -m integration   # spawns a live server
-uv run pytest -m e2e           # drives the CLI against a live server
-uv run pytest -m docker        # builds and exercises the Docker image
-uv run pytest -m ""            # run everything
+uv run pytest                            # fast suites — run these on every change
+uv run pytest -m integration --no-cov    # spawns a live server
+uv run pytest -m e2e --no-cov            # drives the CLI against a live server
+uv run pytest -m docker --no-cov         # builds and exercises the Docker image
+uv run pytest -m "" --no-cov             # run everything
 ```
 
-New code should ship with tests in the folder matching its scope. Coverage is
-collected automatically — view it with `uv run pytest --cov-report=term`.
+The default run collects coverage and **fails below 95%**. Pass `--no-cov`
+when running an opt-in suite on its own, since a single marker selection will
+not exercise enough of the codebase to clear that threshold.
+
+New code should ship with tests in the folder matching its scope.
 
 Our CI pipeline runs the test suite across all supported Python versions.
 

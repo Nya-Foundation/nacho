@@ -1,5 +1,7 @@
 """Tests for the event system."""
 
+import pytest
+
 from nacho.event import (
     Change,
     EventPipeline,
@@ -261,3 +263,57 @@ class TestDecorators:
             {},
         )
         assert fired == ["x"]
+
+
+class TestEventPipelineEdgeCases:
+    def test_emit_with_ignore_flag_dispatches_nothing(self):
+        assert EventPipeline().emit(EventType.UPDATE, ignore=True) == 0
+
+    def test_emit_invokes_matching_handlers(self):
+        pipeline = EventPipeline()
+        seen = []
+        pipeline.register(lambda **k: seen.append(k), EventType.UPDATE)
+        assert pipeline.emit(EventType.UPDATE, path="x", new_value=1) == 1
+        assert seen[0]["path"] == "x"
+
+    def test_register_handler_alias_accepts_event_list(self):
+        pipeline = EventPipeline()
+        handler = pipeline.register_handler(
+            lambda **k: None, [EventType.CREATE, EventType.UPDATE])
+        assert pipeline.unregister(handler) is True
+
+    def test_unregister_unknown_handler_returns_false(self):
+        from nacho.event import EventHandler
+
+        orphan = EventHandler(lambda **k: None, {EventType.UPDATE}, None, 100)
+        assert EventPipeline().unregister(orphan) is False
+
+    def test_match_path_rejects_length_mismatch(self):
+        assert _match_path("a.b", "a") is False
+
+    def test_transaction_get_reads_pending_state(self):
+        from nacho import Nacho
+
+        config = Nacho({"a": 1})
+        with config.transaction() as txn:
+            txn.set("a", 2)
+            assert txn.get("a") == 2
+            assert txn.get()["a"] == 2
+
+
+@pytest.mark.asyncio
+async def test_async_handler_dispatched_on_running_loop():
+    import asyncio
+
+    from nacho import Nacho
+
+    config = Nacho({"x": 1}, events=True)
+    seen = []
+
+    @config.on_change("x")
+    async def handler(**kwargs):
+        seen.append(kwargs.get("new_value"))
+
+    config.set("x", 2)
+    await asyncio.sleep(0.05)  # let the scheduled task run
+    assert 2 in seen

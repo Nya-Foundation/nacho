@@ -492,3 +492,134 @@ class TestSchemaValidation:
         with pytest.raises(ValidationError):
             c.delete("database.port")
         assert c.get("database.port") == 5432
+
+
+class TestTypedGetterCoercion:
+    """Coercion edge cases for the get_int/float/bool/list/dict helpers."""
+
+    def test_get_int_none_value_returns_default(self):
+        assert Nacho({"v": None}).get_int("v", default=7) == 7
+
+    def test_get_int_uncoercible_returns_default(self):
+        assert Nacho({"v": "abc"}).get_int("v", default=0) == 0
+
+    def test_get_float_none_value_returns_default(self):
+        assert Nacho({"v": None}).get_float("v", default=1.5) == 1.5
+
+    def test_get_float_uncoercible_returns_default(self):
+        assert Nacho({"v": "not-a-float"}).get_float("v", default=2.5) == 2.5
+
+    def test_get_bool_none_value_returns_default(self):
+        assert Nacho({"v": None}).get_bool("v", default=True) is True
+
+    def test_get_bool_from_numeric_value(self):
+        assert Nacho({"v": 5}).get_bool("v") is True
+        assert Nacho({"v": 0}).get_bool("v") is False
+
+    def test_get_bool_uncoercible_returns_default(self):
+        assert Nacho({"v": [1, 2]}).get_bool("v", default=False) is False
+
+    def test_get_list_none_value_returns_default(self):
+        assert Nacho({"v": None}).get_list("v", default=[1]) == [1]
+
+    def test_get_dict_none_value_returns_default(self):
+        assert Nacho({"v": None}).get_dict("v", default={"d": 1}) == {"d": 1}
+
+    def test_get_dict_non_dict_returns_default(self):
+        assert Nacho({"v": "scalar"}).get_dict("v", default={}) == {}
+
+
+class _ScriptedStorage(StorageBackend):
+    """A storage backend whose load() returns queued values in order."""
+
+    def __init__(self, *results):
+        super().__init__()
+        self._results = list(results)
+        self.saved = None
+
+    def load(self):
+        value = self._results.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def save(self, data):
+        self.saved = data
+
+
+class TestConfigEdgeCases:
+    def test_update_with_empty_dict_is_noop(self):
+        assert Nacho({"a": 1}).update({}) is False
+
+    def test_replace_rejects_non_dict(self):
+        with pytest.raises(TypeError):
+            Nacho({"a": 1}).replace("not-a-dict")
+
+    def test_replace_can_swap_in_a_new_schema(self, tmp_schema):
+        c = Nacho({"database": {"host": "h", "port": 1}})
+        # replacing with a schema validates the new data against it
+        assert c.replace({"database": {"host": "h", "port": 1}}, schema=tmp_schema) is True
+        with pytest.raises(ValidationError):
+            c.replace({"database": {"host": "h"}}, schema=tmp_schema)
+
+    def test_load_without_storage_returns_current_config(self):
+        c = Nacho({"a": 1})
+        assert c.load() == {"a": 1}
+
+    def test_load_from_file_storage_reapplies(self, tmp_yaml):
+        c = Nacho(str(tmp_yaml))
+        assert c.load()["database"]["host"] == "localhost"
+
+    def test_validate_without_schema_returns_empty(self):
+        assert Nacho({"a": 1}).validate() == []
+
+    def test_check_without_schema_returns_empty(self):
+        assert Nacho({"a": 1}).check({"anything": True}) == []
+
+    def test_event_pipeline_and_disabled_properties(self):
+        c = Nacho({"a": 1}, events=True)
+        assert c.event_pipeline is not None
+        assert isinstance(c.event_disabled, bool)
+
+    def test_remote_push_replaces_config(self):
+        c = Nacho({"a": 1})
+        c._on_remote_push({"a": 2, "b": 3})
+        assert c.get_all() == {"a": 2, "b": 3}
+
+    def test_construction_rejects_non_dict_from_storage(self):
+        with pytest.raises(StorageError):
+            Nacho(storage=_ScriptedStorage(["not", "a", "dict"]))
+
+    def test_reload_emits_reload_and_change_events(self):
+        storage = _ScriptedStorage({"a": 1}, {"a": 2})
+        c = Nacho(storage=storage, events=True)
+        seen = []
+
+        @c.on_event(EventType.RELOAD)
+        def _on_reload(**kwargs):
+            seen.append("reload")
+
+        assert c.load() == {"a": 2}
+        assert "reload" in seen
+
+    def test_reload_storage_error_keeps_current_when_allowed(self):
+        storage = _ScriptedStorage({"a": 1}, StorageError("backend down"))
+        c = Nacho(storage=storage, events=True, allow_empty_on_load_error=True)
+        assert c.load() == {"a": 1}  # reload failed; previous config retained
+
+    def test_reload_non_dict_payload_raises(self):
+        storage = _ScriptedStorage({"a": 1}, ["not", "a", "dict"])
+        c = Nacho(storage=storage)
+        with pytest.raises(StorageError):
+            c.load()
+
+    def test_check_with_schema_reports_violations(self, tmp_schema):
+        c = Nacho({"database": {"host": "h", "port": 1}}, schema=tmp_schema)
+        assert c.check({"database": {"host": "h", "port": 1}}) == []
+        assert c.check({"database": {"host": "h"}})  # missing port -> errors
+
+    def test_reload_storage_error_propagates_by_default(self):
+        storage = _ScriptedStorage({"a": 1}, StorageError("backend down"))
+        c = Nacho(storage=storage)
+        with pytest.raises(StorageError):
+            c.load()

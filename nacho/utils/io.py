@@ -13,12 +13,12 @@ import yaml
 
 try:
     import tomllib  # Python ≥ 3.11
-except ImportError:
+except ImportError:  # pragma: no cover - Python < 3.11 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
 try:
     import tomli_w
-except ImportError:
+except ImportError:  # pragma: no cover - optional TOML-write dependency
     tomli_w = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)

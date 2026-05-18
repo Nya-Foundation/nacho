@@ -10,13 +10,13 @@ try:
     import uvicorn
 
     HAS_SERVER_DEPS = True
-except ImportError:
+except ImportError:  # pragma: no cover - optional 'server' extra not installed
     HAS_SERVER_DEPS = False
 
 # Only import if dependencies are available
 if HAS_SERVER_DEPS:
     from .app import NachoOrchestrator
-else:
+else:  # pragma: no cover - optional 'server' extra not installed
     # Define a placeholder class that raises ImportError when instantiated
     class NachoOrchestrator:
         """Placeholder class for NachoOrchestrator.
