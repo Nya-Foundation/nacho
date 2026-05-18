@@ -12,11 +12,11 @@ services:
     # Optional: mount a custom config file for the default app.
     # volumes:
     #   - ./config.yaml:/app/config.yaml
-    command: ["nacho", "server", "--config", "config.yaml"]
+    command: ["server", "--config", "config.yaml"]
     # Command Examples:
-    # - Enable Event Emission: ["nacho", "server", "--config", "config.yaml", "--event", "true"]
-    # - Enable Server with Auth: ["nacho", "server", "--config", "config.yaml", "--api-key", "your_api_key"]
-    # - Enable Server with read-only : ["nacho", "server", "--config", "config.yaml", "--read-only", "true"]
+    # - Enable Event Emission: ["server", "--config", "config.yaml", "--event", "true"]
+    # - Enable Server with Auth: ["server", "--config", "config.yaml", "--api-key", "your_api_key"]
+    # - Enable Server with read-only : ["server", "--config", "config.yaml", "--read-only", "true"]
     environment:
       # Notes: CONFIG_PATH only supports relative paths
       # Optional: performance boost (safe to ignore if unsupported)
