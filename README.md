@@ -1,14 +1,14 @@
 # Nacho
 
-```text
- _   _     _      ____  _   _   ___
-| \ | |   / \    / ___|| | | | / _ \
+<div align="center">
+
+<pre>
+ _   _     _      ____  _   _   ___  
+| \ | |   / \    / ___|| | | | / _ \ 
 |  \| |  / _ \  | |    | |_| || | | |
 | |\  | / ___ \ | |___ |  _  || |_| |
-|_| \_|/_/   \_\ \____||_| |_| \___/
-```
-
-<div align="center">
+|_| \_|/_/   \_\ \____||_| |_| \___/ 
+</pre>
 
   <h3>Lightweight, schema-first dynamic configuration service for Python.</h3>
 
