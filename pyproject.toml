@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nacho-python"
-version = "0.0.0"
+version = "0.0.1"
 description = "Nacho - Lightweight, schema-first dynamic configuration service"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -78,6 +78,7 @@ lint = [
 
 [project.scripts]
 nacho = "nacho.cli.main:main_cli"  # Updated script path
+
 
 
 [tool.setuptools]
