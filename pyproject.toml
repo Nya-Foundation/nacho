@@ -1,0 +1,144 @@
+[build-system]
+requires = ["setuptools>=77.0.3", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nacho-python"
+version = "0.0.1"
+description = "Nacho - Lightweight, schema-first dynamic configuration service"
+readme = "README.md"
+requires-python = ">=3.9"
+
+license = "MIT"
+license-files = ["LICENSE"]
+
+authors = [
+    {name = "Nya Foundation Team (k3scat)", email = "k3scat@github.com"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+# Core dependencies only - minimal install
+dependencies = [
+    "pyyaml>=6.0",
+    "tomli>=2.0.0; python_version<'3.11'",
+    "tomli-w>=1.0.0",
+]
+
+[project.optional-dependencies]
+# Server components - REST API and watch server
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "websockets>=10.0",
+]
+
+# Remote configuration client
+remote = [
+    "requests>=2.31.0",
+    "websocket-client>=1.8.0",
+]
+
+# Schema validation
+schema = [
+    "jsonschema>=4.0.0",
+    "rfc3987>=1.3.8",
+]
+
+# All features
+all = [
+    "nacho-python[server,remote,schema]",
+]
+
+# Development tools
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.27.0",
+    "nacho-python[all]",
+]
+
+lint = [
+    "flake8>=6.0.0",
+    "black>=23.0.0",
+    "isort>=5.0.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/nya-foundation/nacho"
+"Bug Tracker" = "https://github.com/nya-foundation/nacho/issues"
+
+[project.scripts]
+nacho = "nacho.cli.main:main_cli"  # Updated script path
+
+[tool.setuptools]
+package-dir = {"" = "."}  # Use current directory as source root
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]  # Root directory for discovery
+include = ["nacho*"] # Include nacho and its subpackages
+
+[tool.setuptools.package-data]
+"nacho" = ["server/ui/*.html"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.pyc", "*.pyo", "__pycache__/*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+# Default run: fast tests only. Heavier suites are opt-in, e.g.
+#   pytest -m integration      pytest -m e2e      pytest -m docker
+#   pytest -m ""               (run everything)
+addopts = '-m "not integration and not e2e and not docker" --cov=nacho --cov-report=term-missing --strict-markers'
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "unit: fast tests with no external dependencies",
+    "smoke: lightweight startup/import/health tests",
+    "integration: tests requiring external services",
+    "e2e: full end-to-end tests",
+    "docker: tests requiring Docker",
+]
+
+[tool.coverage.run]
+source = ["nacho"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+    "raise ImportError"
+]
+
+
+[tool.semantic_release]
+tag_format = "v{version}"
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["nacho/_version.py:__version__"]
+build_command = "python -m pip install build && python -m build"
+commit_parser = "conventional"
+commit_message = "chore(release): bump version to v{version} [skip ci]"
+commit_author = "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"

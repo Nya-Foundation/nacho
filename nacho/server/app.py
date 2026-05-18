@@ -1,0 +1,515 @@
+"""API-first Nacho configuration server."""
+
+from __future__ import annotations
+
+import json
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+import uvicorn
+from fastapi import FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+
+from nacho._version import __version__
+from nacho.config import Nacho
+from nacho.schema import ValidationError
+from nacho.server.auth import AuthGuard, AuthMiddleware
+from nacho.utils.io import dump_string, load_string
+
+from .models import (
+    AppCreateRequest,
+    AppMetadataRequest,
+    ConfigRequest,
+    ConvertRequest,
+    PathUpdateRequest,
+    SchemaUpdateRequest,
+)
+from .runtime import AppManager, ConfigApp, RevisionConflictError
+
+LOGGER = logging.getLogger(__name__)
+
+_UI_INDEX = Path(__file__).parent / "ui" / "index.html"
+
+
+class InvalidConfigDataError(ValueError):
+    """Raised when a request body cannot be parsed as config data."""
+
+
+class NachoOrchestrator:
+    """Small FastAPI wrapper around one or more :class:`Nacho` instances."""
+
+    def __init__(
+        self,
+        apps: Union[Dict[str, Nacho], Nacho, None] = None,
+        api_key: Optional[str] = None,
+        read_only: bool = False,
+        cors_origins: Optional[List[str]] = None,
+        data_dir: Optional[Union[str, Path]] = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        self.read_only = read_only
+        self.cors_origins = list(cors_origins) if cors_origins is not None else ["*"]
+        self.logger = logger or LOGGER
+        self.auth = AuthGuard(api_key=api_key) if api_key else None
+        self.manager = AppManager(
+            data_dir=Path(data_dir) if data_dir else None,
+            logger=self.logger,
+        )
+
+        self.manager.load_persisted()
+        self._load_initial_apps(apps)
+
+        if not self.manager.apps:
+            self.manager.create("default", config_data={}, description="Default config")
+
+        self.app = self._create_app()
+        self._setup_middleware()
+        self._setup_routes()
+
+    def _load_initial_apps(self, apps: Union[Dict[str, Nacho], Nacho, None]) -> None:
+        if apps is None:
+            return
+        if isinstance(apps, Nacho):
+            apps = {"default": apps}
+        for name, config in apps.items():
+            self.manager.create(name, config=config, replace=True)
+
+    def _create_app(self) -> FastAPI:
+        @asynccontextmanager
+        async def lifespan(_: FastAPI):
+            self.logger.info("Starting Nacho API server")
+            yield
+            self.logger.info("Stopping Nacho API server")
+            self.manager.cleanup()
+
+        return FastAPI(
+            title="Nacho API",
+            description="Schema-first dynamic configuration service",
+            version=__version__,
+            lifespan=lifespan,
+        )
+
+    def _setup_middleware(self) -> None:
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=self.cors_origins,
+            allow_credentials=self._allow_cors_credentials(),
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        if self.auth:
+            self.app.add_middleware(AuthMiddleware, auth=self.auth, logger=self.logger)
+
+    def _setup_routes(self) -> None:
+        @self.app.get("/")
+        async def root() -> Dict[str, Any]:
+            return {
+                "name": "nacho",
+                "version": __version__,
+                "docs": "/docs",
+                "health": "/health",
+            }
+
+        @self.app.get("/health")
+        async def health() -> Dict[str, Any]:
+            return {
+                "status": "ok",
+                "version": __version__,
+                "apps": len(self.manager.apps),
+                "read_only": self.read_only,
+                "auth_required": self.auth is not None,
+            }
+
+        @self.app.get("/ui", include_in_schema=False)
+        async def ui() -> FileResponse:
+            if not _UI_INDEX.is_file():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Management UI is not bundled with this installation",
+                )
+            return FileResponse(_UI_INDEX, media_type="text/html")
+
+        @self.app.get("/api/apps")
+        async def list_apps() -> Dict[str, Dict[str, Dict[str, Any]]]:
+            return {"data": self.manager.list_info()}
+
+        @self.app.post("/api/convert")
+        async def convert_payload(request: ConvertRequest) -> Dict[str, Any]:
+            """Convert a config/schema payload between json, yaml, and toml."""
+            try:
+                obj = self._parse_config(request.data, request.from_)
+                text = dump_string(obj, request.to)
+            except (InvalidConfigDataError, ValueError) as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {"format": request.to, "data": text}
+
+        @self.app.post("/api/apps", status_code=status.HTTP_201_CREATED)
+        async def create_app(request: AppCreateRequest) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                config_data = self._parse_config(request.data, request.format)
+                schema = self._parse_schema(request.schema_, request.schema_format)
+                app = self.manager.create(
+                    request.name,
+                    config_data=config_data,
+                    description=request.description,
+                    schema=schema,
+                )
+            except (InvalidConfigDataError, ValueError, ValidationError) as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {"message": "App created", "app": app.info}
+
+        @self.app.get("/api/apps/{app_name}")
+        async def get_app(app_name: str) -> Dict[str, Dict[str, Any]]:
+            return {"data": self._get_app(app_name).info}
+
+        @self.app.put("/api/apps/{app_name}")
+        async def replace_app(
+            app_name: str,
+            request: AppCreateRequest,
+            if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        ) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                config_data = self._parse_config(request.data, request.format)
+                schema = self._parse_schema(request.schema_, request.schema_format)
+                app = self.manager.replace(
+                    app_name,
+                    new_name=request.name,
+                    config_data=config_data,
+                    description=request.description,
+                    schema=schema,
+                    expected_revision=self._expected_revision(request.revision, if_match),
+                )
+            except KeyError:
+                raise self._not_found(app_name)
+            except RevisionConflictError as exc:
+                raise self._conflict(exc)
+            except (InvalidConfigDataError, ValueError, ValidationError) as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {"message": "App replaced", "app": app.info}
+
+        @self.app.patch("/api/apps/{app_name}/metadata")
+        async def update_metadata(
+            app_name: str,
+            request: AppMetadataRequest,
+            if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        ) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                app = self.manager.rename(
+                    app_name,
+                    new_name=request.name,
+                    description=request.description,
+                    expected_revision=self._expected_revision(request.revision, if_match),
+                )
+            except KeyError:
+                raise self._not_found(app_name)
+            except RevisionConflictError as exc:
+                raise self._conflict(exc)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {"message": "App metadata updated", "app": app.info}
+
+        @self.app.delete("/api/apps/{app_name}")
+        async def delete_app(app_name: str) -> Dict[str, str]:
+            self._check_writable()
+            if not self.manager.delete(app_name):
+                raise self._not_found(app_name)
+            return {"message": f"App {app_name!r} deleted"}
+
+        @self.app.get("/api/apps/{app_name}/config")
+        async def get_config(app_name: str, response: Response) -> Dict[str, Any]:
+            app = self._get_app(app_name)
+            self._set_revision_headers(response, app)
+            return app.config.get_all()
+
+        @self.app.put("/api/apps/{app_name}/config")
+        async def replace_config(
+            app_name: str,
+            request: ConfigRequest,
+            if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        ) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                config_data = self._parse_config(request.data, request.format)
+                app = self.manager.replace_config(
+                    app_name,
+                    config_data,
+                    expected_revision=self._expected_revision(request.revision, if_match),
+                )
+            except KeyError:
+                raise self._not_found(app_name)
+            except RevisionConflictError as exc:
+                raise self._conflict(exc)
+            except (InvalidConfigDataError, ValidationError) as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {
+                "message": "Configuration replaced",
+                "revision": app.revision,
+                "data": app.config.get_all(),
+            }
+
+        @self.app.get("/api/apps/{app_name}/schema")
+        async def get_schema(app_name: str) -> Dict[str, Any]:
+            app = self._get_app(app_name)
+            return {"data": {"schema": app.schema}}
+
+        @self.app.put("/api/apps/{app_name}/schema")
+        async def replace_schema(
+            app_name: str,
+            request: SchemaUpdateRequest,
+            if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        ) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                schema = self._parse_schema(request.schema_, request.schema_format)
+                app = self.manager.update_schema(
+                    app_name,
+                    schema,
+                    expected_revision=self._expected_revision(request.revision, if_match),
+                )
+            except KeyError:
+                raise self._not_found(app_name)
+            except RevisionConflictError as exc:
+                raise self._conflict(exc)
+            except (InvalidConfigDataError, ValueError, ValidationError) as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {"message": "Schema updated", "revision": app.revision, "schema": app.schema}
+
+        @self.app.get("/api/apps/{app_name}/config/{path:path}")
+        async def get_path(app_name: str, path: str) -> Dict[str, Any]:
+            app = self._get_app(app_name)
+            missing = object()
+            value = app.config.get(path, missing)
+            if value is missing:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Configuration path {path!r} not found",
+                )
+            return {"path": path, "value": value}
+
+        @self.app.put("/api/apps/{app_name}/config/{path:path}")
+        async def set_path(
+            app_name: str,
+            path: str,
+            request: PathUpdateRequest,
+            if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        ) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                value = self._convert_value(request.value, request.type)
+                app = self.manager.get(app_name)
+                self.manager.set_config_path(
+                    app_name,
+                    path,
+                    value,
+                    expected_revision=self._expected_revision(request.revision, if_match),
+                )
+                app = self._get_app(app_name) if app is None else app
+            except KeyError:
+                raise self._not_found(app_name)
+            except RevisionConflictError as exc:
+                raise self._conflict(exc)
+            except (ValueError, TypeError, json.JSONDecodeError, ValidationError) as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {
+                "message": "Configuration path updated",
+                "path": path,
+                "value": value,
+                "revision": app.revision,
+            }
+
+        @self.app.delete("/api/apps/{app_name}/config/{path:path}")
+        async def delete_path(
+            app_name: str,
+            path: str,
+            revision: Optional[int] = None,
+            if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        ) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                deleted = self.manager.delete_config_path(
+                    app_name,
+                    path,
+                    expected_revision=self._expected_revision(revision, if_match),
+                )
+                if not deleted:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Configuration path {path!r} not found",
+                    )
+                app = self._get_app(app_name)
+            except KeyError:
+                raise self._not_found(app_name)
+            except RevisionConflictError as exc:
+                raise self._conflict(exc)
+            except ValidationError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {"message": f"Configuration path {path!r} deleted", "revision": app.revision}
+
+        @self.app.post("/api/apps/{app_name}/validate")
+        async def validate_config(app_name: str, request: ConfigRequest) -> Dict[str, Any]:
+            app = self._get_app(app_name)
+            try:
+                config_data = self._parse_config(request.data, request.format)
+            except InvalidConfigDataError as exc:
+                return {"valid": False, "errors": [str(exc)], "data": app.config.get_all()}
+            errors = app.config.check(config_data)
+            return {"valid": not errors, "errors": errors, "data": config_data}
+
+        @self.app.websocket("/ws/{app_name}")
+        async def watch(websocket: WebSocket, app_name: str) -> None:
+            if self.auth and not self.auth.verify_websocket(websocket):
+                await websocket.close(code=1008, reason="Unauthorized")
+                return
+            app = self.manager.get(app_name)
+            if app is None:
+                await websocket.close(code=4004, reason=f"App {app_name!r} not found")
+                return
+
+            await app.hub.connect(websocket)
+            try:
+                await websocket.send_json(
+                    {
+                        "type": "initial_config",
+                        "app": app.name,
+                        "revision": app.revision,
+                        "data": app.config.get_all(),
+                    }
+                )
+                while True:
+                    await websocket.receive_text()
+            except WebSocketDisconnect:
+                pass
+            finally:
+                app.hub.disconnect(websocket)
+
+    def _parse_config(self, data: Any, fmt: str) -> Dict[str, Any]:
+        if isinstance(data, dict):
+            return data
+        try:
+            parsed = load_string(data, fmt)
+        except Exception as exc:
+            raise InvalidConfigDataError(f"Invalid {fmt} config: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise InvalidConfigDataError("Configuration payload must decode to an object")
+        return parsed
+
+    def _parse_schema(self, data: Optional[Any], fmt: str) -> Optional[Dict[str, Any]]:
+        if data is None:
+            return None
+        parsed = self._parse_config(data, fmt)
+        return parsed
+
+    def _convert_value(self, value: Any, type_hint: str) -> Any:
+        if type_hint == "raw":
+            return value
+        if type_hint == "str":
+            return str(value)
+        if type_hint == "int":
+            return int(value)
+        if type_hint == "float":
+            return float(value)
+        if type_hint == "bool":
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                lowered = value.lower()
+                if lowered in {"true", "yes", "1", "on"}:
+                    return True
+                if lowered in {"false", "no", "0", "off"}:
+                    return False
+            raise ValueError(f"Cannot convert {value!r} to bool")
+        if type_hint in {"list", "dict"} and isinstance(value, str):
+            value = json.loads(value)
+        if type_hint == "list":
+            return list(value)
+        if type_hint == "dict":
+            return dict(value)
+        raise ValueError(f"Unsupported value type: {type_hint}")
+
+    def _allow_cors_credentials(self) -> bool:
+        return "*" not in self.cors_origins
+
+    def _get_app(self, name: str) -> ConfigApp:
+        app = self.manager.get(name)
+        if app is None:
+            raise self._not_found(name)
+        return app
+
+    def _not_found(self, name: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"App {name!r} not found",
+        )
+
+    def _conflict(self, exc: RevisionConflictError) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "revision_conflict",
+                "expected": exc.expected,
+                "actual": exc.actual,
+            },
+        )
+
+    def _expected_revision(
+        self,
+        body_revision: Optional[int],
+        if_match: Optional[str],
+    ) -> Optional[int]:
+        header_revision = self._parse_if_match(if_match)
+        if (
+            body_revision is not None
+            and header_revision is not None
+            and body_revision != header_revision
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="revision and If-Match refer to different revisions",
+            )
+        return body_revision if body_revision is not None else header_revision
+
+    def _parse_if_match(self, value: Optional[str]) -> Optional[int]:
+        if value is None:
+            return None
+        value = value.strip()
+        if value == "*":
+            return None
+        if value.startswith("W/"):
+            value = value[2:].strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1]
+        try:
+            revision = int(value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="If-Match must be an integer revision",
+            ) from exc
+        if revision < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="If-Match revision must be positive",
+            )
+        return revision
+
+    def _set_revision_headers(self, response: Response, app: ConfigApp) -> None:
+        revision = str(app.revision)
+        response.headers["ETag"] = f'"{revision}"'
+        response.headers["X-Nacho-Revision"] = revision
+
+    def _check_writable(self) -> None:
+        if self.read_only:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Server is in read-only mode",
+            )
+
+    def run(self, host: str = "0.0.0.0", port: int = 8000, reload: bool = False) -> None:
+        config = uvicorn.Config(app=self.app, host=host, port=port, reload=reload)
+        uvicorn.Server(config).run()

@@ -1,0 +1,38 @@
+services:
+  nacho:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: k3scat/nacho:latest
+    container_name: nacho
+    restart: unless-stopped
+    ports:
+      # Notes: change the host port if conflicting
+      - "8000:8000"
+    # Optional: mount a custom config file for the default app.
+    # volumes:
+    #   - ./config.yaml:/app/config.yaml
+    command: ["nacho", "server", "--config", "config.yaml"]
+    # Command Examples:
+    # - Enable Event Emission: ["nacho", "server", "--config", "config.yaml", "--event", "true"]
+    # - Enable Server with Auth: ["nacho", "server", "--config", "config.yaml", "--api-key", "your_api_key"]
+    # - Enable Server with read-only : ["nacho", "server", "--config", "config.yaml", "--read-only", "true"]
+    environment:
+      # Notes: CONFIG_PATH only supports relative paths
+      # Optional: performance boost (safe to ignore if unsupported)
+      - DOCKER_BUILDKIT=1
+      - COMPOSE_DOCKER_CLI_BUILD=1
+    networks:
+      - nacho-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+networks:
+  nacho-network:
+    driver: bridge
+    driver_opts:
+      # Avoid naming conflicts; optional, WSL-safe
+      com.docker.network.bridge.name: nacho-br

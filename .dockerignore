@@ -1,0 +1,33 @@
+# Keep the build context (and image) small and reproducible.
+.git
+.gitignore
+.github
+
+# Local virtual environments / caches
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Build artifacts
+build
+dist
+*.egg-info
+
+# Tests are not needed in the runtime image
+tests
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+
+# Docker files themselves
+Dockerfile
+docker-compose.yml
+.dockerignore

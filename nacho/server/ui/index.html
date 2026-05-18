@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nacho — Configuration Manager</title>
+<style>
+/* --------------------------------------------------------------------- */
+/* Theme                                                                  */
+/* --------------------------------------------------------------------- */
+:root {
+  --bg: #f6f6f3;
+  --surface: #ffffff;
+  --surface-2: #f0f0ec;
+  --border: #e3e3dc;
+  --text: #1e1e1b;
+  --muted: #76766c;
+  --accent: #d6892a;
+  --accent-fg: #ffffff;
+  --danger: #c4463a;
+  --ok: #2f9e5f;
+  --c-str: #2f8f4e;
+  --c-num: #2f6fb0;
+  --c-kw: #9b5cb8;
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a17;
+    --surface: #232320;
+    --surface-2: #2c2c27;
+    --border: #38382f;
+    --text: #ececea;
+    --muted: #9a9a8f;
+    --accent: #e0a44a;
+    --accent-fg: #1a1a17;
+    --danger: #e0685c;
+    --ok: #4cb878;
+    --c-str: #6cc28a;
+    --c-num: #6aa8e0;
+    --c-kw: #c08fda;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+button { font-family: inherit; font-size: 13px; cursor: pointer; }
+input, textarea, select { font-family: inherit; font-size: 13px; }
+h1, h2, h3 { margin: 0; font-weight: 600; }
+.hidden { display: none !important; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+/* --------------------------------------------------------------------- */
+/* Wordmark                                                               */
+/* --------------------------------------------------------------------- */
+.wordmark {
+  font-weight: 650;
+  letter-spacing: -0.022em;
+  font-family: var(--sans);
+  user-select: none;
+}
+.wordmark .wm-dot { color: var(--accent); }
+
+/* --------------------------------------------------------------------- */
+/* Buttons & form controls                                                */
+/* --------------------------------------------------------------------- */
+.btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  transition: background .12s, border-color .12s;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.danger { color: var(--danger); border-color: var(--border); }
+.btn.danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn.sm { padding: 4px 9px; font-size: 12px; }
+
+.select {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.select.mini { padding: 3px 6px; font-size: 11px; }
+
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.field-head {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;
+}
+.field-head label { margin: 0; }
+.input, textarea.input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+.input:focus, textarea.input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+textarea.code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* --------------------------------------------------------------------- */
+/* Code editor (transparent textarea over a highlighted backdrop)          */
+/* --------------------------------------------------------------------- */
+.code-wrap {
+  position: relative;
+  height: 440px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  overflow: hidden;
+}
+.code-wrap.focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.code-hl, .code-input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  tab-size: 2;
+  white-space: pre;
+}
+.code-hl {
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text);
+}
+.code-hl code { font: inherit; }
+.code-input {
+  z-index: 1;
+  overflow: auto;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  resize: none;
+}
+.code-input:focus { outline: none; }
+.code-input::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.tok-key { color: var(--accent); }
+.tok-str { color: var(--c-str); }
+.tok-num { color: var(--c-num); }
+.tok-kw  { color: var(--c-kw); }
+.tok-comment { color: var(--muted); font-style: italic; }
+
+/* --------------------------------------------------------------------- */
+/* Connect view                                                           */
+/* --------------------------------------------------------------------- */
+#connect-view {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.connect-card {
+  width: 340px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+}
+.connect-card .wordmark { font-size: 26px; }
+.connect-card .sub { color: var(--muted); margin: 2px 0 20px; }
+.connect-error { color: var(--danger); font-size: 12px; margin-top: 8px; min-height: 16px; }
+
+/* --------------------------------------------------------------------- */
+/* App layout                                                             */
+/* --------------------------------------------------------------------- */
+#app-view { height: 100%; display: flex; flex-direction: column; }
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.topbar .wordmark { font-size: 17px; }
+.topbar .ver { color: var(--muted); font-size: 12px; }
+.topbar .spacer { flex: 1; }
+.badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.badge.ro { color: var(--danger); }
+
+.layout { flex: 1; display: flex; min-height: 0; }
+.sidebar {
+  width: 250px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-head h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.app-list { overflow-y: auto; flex: 1; padding: 6px; }
+.app-item {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.app-item:hover { background: var(--surface-2); }
+.app-item.active { background: var(--accent); color: var(--accent-fg); }
+.app-item.active .app-rev { color: var(--accent-fg); opacity: .8; }
+.app-item .app-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-rev { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.content { flex: 1; overflow-y: auto; padding: 20px 24px; min-width: 0; }
+.empty-state { color: var(--muted); text-align: center; margin-top: 80px; }
+
+/* App detail */
+.detail-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+.detail-head h2 { font-size: 18px; }
+.detail-head .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.detail-head .spacer { flex: 1; }
+.meta-row { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.live-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); margin-right: 5px; vertical-align: middle;
+}
+.live-dot.on { background: var(--ok); }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.tab {
+  padding: 7px 14px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+
+.editor-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.editor-toolbar .spacer { flex: 1; }
+.editor-status { font-size: 12px; color: var(--muted); }
+.editor-status.dirty { color: var(--accent); }
+
+.notice {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+}
+.notice.error { color: var(--danger); border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.notice.ok { color: var(--ok); border-color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.notice.warn { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.notice ul { margin: 4px 0 0; padding-left: 18px; }
+.notice .notice-actions { margin-top: 6px; display: flex; gap: 8px; }
+
+/* --------------------------------------------------------------------- */
+/* Modal                                                                  */
+/* --------------------------------------------------------------------- */
+#modal-overlay {
+  position: fixed; inset: 0;
+  z-index: 1000;
+  background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 440px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 22px;
+}
+.modal h3 { margin-bottom: 16px; font-size: 16px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.modal-error { color: var(--danger); font-size: 12px; min-height: 16px; margin-top: 4px; }
+
+/* --------------------------------------------------------------------- */
+/* Toast                                                                  */
+/* --------------------------------------------------------------------- */
+#toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg);
+  padding: 9px 16px; border-radius: var(--radius); font-size: 13px;
+  opacity: 0; transition: opacity .2s; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ===================== Connect view ===================== -->
+<div id="connect-view">
+  <div class="connect-card">
+    <div class="wordmark">Nacho<span class="wm-dot">.</span></div>
+    <div class="sub">Configuration Manager</div>
+    <div class="field">
+      <label for="key-input">API key</label>
+      <input id="key-input" class="input" type="password" placeholder="Enter API key" autocomplete="off" />
+    </div>
+    <button id="connect-btn" class="btn primary" style="width:100%">Connect</button>
+    <div id="connect-error" class="connect-error"></div>
+  </div>
+</div>
+
+<!-- ===================== App view ===================== -->
+<div id="app-view" class="hidden">
+  <div class="topbar">
+    <span class="wordmark">Nacho<span class="wm-dot">.</span></span>
+    <span class="ver" id="server-ver"></span>
+    <span class="badge ro hidden" id="ro-badge">read-only</span>
+    <span class="spacer"></span>
+    <button class="btn sm" id="disconnect-btn">Disconnect</button>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h3>Apps</h3>
+        <button class="btn sm primary" id="new-app-btn">+ New</button>
+      </div>
+      <div class="app-list" id="app-list"></div>
+    </aside>
+    <main class="content" id="content">
+      <div class="empty-state">Select an app, or create one to get started.</div>
+    </main>
+  </div>
+</div>
+
+<div id="modal-overlay" class="hidden"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ===================================================================== */
+/* State                                                                  */
+/* ===================================================================== */
+const FORMATS = ["json", "yaml", "toml"];
+const state = {
+  apiKey: localStorage.getItem("nacho_api_key") || "",
+  authRequired: true,
+  readOnly: false,
+  apps: {},          // name -> info
+  selected: null,    // app name
+  revision: null,
+  configObj: {},     // server-truth config object
+  configFormat: localStorage.getItem("nacho_config_format") || "json",
+  pristine: "",      // editor text of configObj in configFormat
+  schema: null,      // server-truth schema object or null
+  schemaFormat: localStorage.getItem("nacho_schema_format") || "json",
+  schemaPristine: "",
+  ws: null,
+  wsRetry: null,
+  activeTab: "config",
+};
+let configEd = null;  // code editor for the config tab
+let schemaEd = null;  // code editor for the schema tab
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtOptions = (sel) =>
+  FORMATS.map((f) => '<option value="' + f + '"' + (f === sel ? " selected" : "") +
+    ">" + f.toUpperCase() + "</option>").join("");
+
+/* ===================================================================== */
+/* HTTP helper                                                            */
+/* ===================================================================== */
+async function api(method, path, body) {
+  const headers = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (state.apiKey) headers["Authorization"] = "Bearer " + state.apiKey;
+  const resp = await fetch(path, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  let payload = null;
+  const text = await resp.text();
+  if (text) { try { payload = JSON.parse(text); } catch (_) { payload = text; } }
+  if (!resp.ok) {
+    const err = new Error("Request failed");
+    err.status = resp.status;
+    err.detail = payload && payload.detail !== undefined ? payload.detail : payload;
+    throw err;
+  }
+  return { data: payload, headers: resp.headers };
+}
+
+function errText(err) {
+  if (err.status === 401 || err.status === 403) return "Unauthorized — check your API key.";
+  const d = err.detail;
+  if (d == null) return "Request failed (" + (err.status || "network") + ").";
+  if (typeof d === "string") return d;
+  if (d.error === "revision_conflict")
+    return "Revision conflict: server is at " + d.actual + ", you sent " + d.expected + ".";
+  return JSON.stringify(d);
+}
+
+/* ----- Format conversion (json / yaml / toml), handled server-side ----- */
+async function convertFormat(data, from, to) {
+  if (from === to && typeof data === "string") return data;
+  const { data: res } = await api("POST", "/api/convert", { data: data, from: from, to: to });
+  return res.data;
+}
+async function serialize(obj, fmt) {
+  if (fmt === "json") return JSON.stringify(obj, null, 2);
+  return convertFormat(obj, "json", fmt);
+}
+async function serializeSafe(obj, fmt, label) {
+  try { return { text: await serialize(obj, fmt), fmt: fmt }; }
+  catch (_) {
+    toast("Cannot show " + label + " as " + fmt.toUpperCase() + " — showing JSON instead.");
+    return { text: JSON.stringify(obj, null, 2), fmt: "json" };
+  }
+}
+
+/* ===================================================================== */
+/* Cookie (needed so the WebSocket handshake can authenticate)             */
+/* ===================================================================== */
+function setAuthCookie(key) {
+  document.cookie = "NACHO_api_key=" + key + "; path=/; SameSite=Strict";
+}
+function clearAuthCookie() {
+  document.cookie = "NACHO_api_key=; path=/; Max-Age=0; SameSite=Strict";
+}
+
+/* ===================================================================== */
+/* Toast                                                                  */
+/* ===================================================================== */
+let toastTimer = null;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+/* ===================================================================== */
+/* Syntax highlighting — json / yaml / toml                                */
+/* ===================================================================== */
+function escHtml(s) {
+  return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+function highlightJSON(src) {
+  return escHtml(src).replace(
+    /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (m, str, colon, kw, num) => {
+      if (str !== undefined) {
+        const cls = colon ? "tok-key" : "tok-str";
+        return '<span class="' + cls + '">' + str + "</span>" + (colon || "");
+      }
+      if (kw !== undefined) return '<span class="tok-kw">' + kw + "</span>";
+      return '<span class="tok-num">' + num + "</span>";
+    }
+  );
+}
+
+// Highlight a scalar fragment (already HTML-escaped): strings, keywords, numbers.
+function highlightScalar(v) {
+  return v.replace(
+    /("(?:\\.|[^"\\])*"|'[^']*')|\b(true|false|null|yes|no)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/gi,
+    (m, str, kw, num) => {
+      if (str !== undefined) return '<span class="tok-str">' + str + "</span>";
+      if (kw !== undefined) return '<span class="tok-kw">' + kw + "</span>";
+      return '<span class="tok-num">' + num + "</span>";
+    }
+  );
+}
+
+function highlightYAML(src) {
+  return escHtml(src).split("\n").map((line) => {
+    let m = line.match(/^(\s*)(#.*)$/);
+    if (m) return m[1] + '<span class="tok-comment">' + m[2] + "</span>";
+    m = line.match(/^(\s*(?:-\s+)?)([^:#\s][^:#]*?)(:)(\s.*|)$/);
+    if (m) return m[1] + '<span class="tok-key">' + m[2] + "</span>" + m[3] + highlightScalar(m[4]);
+    m = line.match(/^(\s*-\s+)(.*)$/);
+    if (m) return m[1] + highlightScalar(m[2]);
+    return highlightScalar(line);
+  }).join("\n");
+}
+
+function highlightTOML(src) {
+  return escHtml(src).split("\n").map((line) => {
+    let m = line.match(/^(\s*)(#.*)$/);
+    if (m) return m[1] + '<span class="tok-comment">' + m[2] + "</span>";
+    m = line.match(/^(\s*)(\[\[?[^\]]*\]\]?)(\s*)$/);
+    if (m) return m[1] + '<span class="tok-key">' + m[2] + "</span>" + m[3];
+    m = line.match(/^(\s*)([A-Za-z0-9_."\-]+)(\s*=\s*)(.*)$/);
+    if (m) return m[1] + '<span class="tok-key">' + m[2] + "</span>" + m[3] + highlightScalar(m[4]);
+    return highlightScalar(line);
+  }).join("\n");
+}
+
+function highlight(text, lang) {
+  if (lang === "yaml") return highlightYAML(text);
+  if (lang === "toml") return highlightTOML(text);
+  return highlightJSON(text);
+}
+
+/* ===================================================================== */
+/* Code editor — transparent textarea over a highlighted backdrop          */
+/* ===================================================================== */
+function mountCodeEditor(host, opts) {
+  opts = opts || {};
+  let lang = opts.language || "json";
+  const wrap = document.createElement("div");
+  wrap.className = "code-wrap";
+  const pre = document.createElement("pre");
+  pre.className = "code-hl";
+  pre.setAttribute("aria-hidden", "true");
+  const code = document.createElement("code");
+  pre.appendChild(code);
+  const ta = document.createElement("textarea");
+  ta.className = "code-input";
+  ta.spellcheck = false;
+  ta.autocapitalize = "off";
+  ta.setAttribute("autocomplete", "off");
+  if (opts.readOnly) ta.readOnly = true;
+  wrap.append(pre, ta);
+  host.appendChild(wrap);
+
+  const render = () => { code.innerHTML = highlight(ta.value, lang) + "\n"; };
+  const sync = () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; };
+
+  ta.addEventListener("input", () => {
+    render(); sync();
+    if (opts.onInput) opts.onInput();
+  });
+  ta.addEventListener("scroll", sync);
+  ta.addEventListener("focus", () => wrap.classList.add("focus"));
+  ta.addEventListener("blur", () => wrap.classList.remove("focus"));
+  ta.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end");
+    ta.dispatchEvent(new Event("input"));
+  });
+
+  ta.value = opts.value || "";
+  render();
+
+  return {
+    textarea: ta,
+    get value() { return ta.value; },
+    set value(v) { ta.value = v; render(); sync(); },
+    setLanguage(l) { lang = l; render(); },
+    focus() { ta.focus(); },
+  };
+}
+
+/* ===================================================================== */
+/* Connect flow                                                           */
+/* ===================================================================== */
+async function boot() {
+  let health = {};
+  try {
+    const r = await fetch("/health");
+    health = await r.json();
+  } catch (_) { /* server may still be coming up */ }
+  state.authRequired = health.auth_required !== false;
+  state.readOnly = !!health.read_only;
+  $("server-ver").textContent = health.version ? "v" + health.version : "";
+
+  if (!state.authRequired) { state.apiKey = ""; await enterApp(); return; }
+  if (state.apiKey && (await tryConnect())) return;
+  showConnect();
+}
+
+function showConnect() {
+  $("connect-view").classList.remove("hidden");
+  $("app-view").classList.add("hidden");
+  $("key-input").value = state.apiKey;
+  $("key-input").focus();
+}
+
+async function tryConnect() {
+  try {
+    await api("GET", "/api/apps");
+    await enterApp();
+    return true;
+  } catch (err) {
+    if (err.status === 401 || err.status === 403) return false;
+    $("connect-error").textContent = errText(err);
+    return false;
+  }
+}
+
+$("connect-btn").onclick = async () => {
+  const key = $("key-input").value.trim();
+  $("connect-error").textContent = "";
+  if (!key) { $("connect-error").textContent = "API key is required."; return; }
+  state.apiKey = key;
+  setAuthCookie(key);
+  if (await tryConnect()) {
+    localStorage.setItem("nacho_api_key", key);
+  } else if (!$("connect-error").textContent) {
+    $("connect-error").textContent = "Invalid API key.";
+  }
+};
+$("key-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("connect-btn").click();
+});
+
+$("disconnect-btn").onclick = () => {
+  closeWs();
+  state.apiKey = "";
+  state.selected = null;
+  localStorage.removeItem("nacho_api_key");
+  clearAuthCookie();
+  showConnect();
+};
+
+async function enterApp() {
+  if (state.apiKey) setAuthCookie(state.apiKey);
+  $("connect-view").classList.add("hidden");
+  $("app-view").classList.remove("hidden");
+  $("ro-badge").classList.toggle("hidden", !state.readOnly);
+  await refreshApps();
+}
+
+/* ===================================================================== */
+/* App list                                                               */
+/* ===================================================================== */
+async function refreshApps() {
+  const { data } = await api("GET", "/api/apps");
+  state.apps = data.data || {};
+  renderAppList();
+  if (state.selected && !state.apps[state.selected]) state.selected = null;
+}
+
+function renderAppList() {
+  const list = $("app-list");
+  const names = Object.keys(state.apps).sort();
+  if (!names.length) {
+    list.innerHTML = '<div class="empty-state" style="margin-top:24px">No apps yet.</div>';
+    return;
+  }
+  list.innerHTML = "";
+  for (const name of names) {
+    const info = state.apps[name];
+    const div = document.createElement("div");
+    div.className = "app-item" + (name === state.selected ? " active" : "");
+    div.innerHTML = '<span class="app-name">' + esc(name) + "</span>" +
+      '<span class="app-rev">r' + esc(info.revision) + "</span>";
+    div.onclick = () => selectApp(name);
+    list.appendChild(div);
+  }
+}
+
+/* ===================================================================== */
+/* App detail                                                             */
+/* ===================================================================== */
+async function selectApp(name) {
+  if (state.selected === name) return;
+  if (!confirmDiscard()) return;
+  state.selected = name;
+  renderAppList();
+  await loadAppDetail(name);
+  openWs(name);
+}
+
+async function loadAppDetail(name) {
+  let configObj, schemaObj;
+  try {
+    const cfg = await api("GET", "/api/apps/" + encodeURIComponent(name) + "/config");
+    configObj = cfg.data;
+    state.revision = parseInt(cfg.headers.get("X-Nacho-Revision"), 10) || state.apps[name].revision;
+    const sch = await api("GET", "/api/apps/" + encodeURIComponent(name) + "/schema");
+    schemaObj = sch.data.data.schema;
+  } catch (err) {
+    $("content").innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
+    return;
+  }
+  state.configObj = configObj;
+  state.schema = schemaObj;
+
+  const cfg = await serializeSafe(configObj, state.configFormat, "configuration");
+  state.configFormat = cfg.fmt;
+  state.pristine = cfg.text;
+
+  if (schemaObj) {
+    const sch = await serializeSafe(schemaObj, state.schemaFormat, "schema");
+    state.schemaFormat = sch.fmt;
+    state.schemaPristine = sch.text;
+  } else {
+    state.schemaPristine = "";
+  }
+  renderDetail();
+}
+
+function renderDetail() {
+  const name = state.selected;
+  const info = state.apps[name] || {};
+  const c = $("content");
+  c.innerHTML = `
+    <div class="detail-head">
+      <div>
+        <h2>${esc(name)}</h2>
+        <div class="desc">${esc(info.description || "No description")}</div>
+        <div class="meta-row">
+          <span><span class="live-dot" id="live-dot"></span><span id="live-label">offline</span></span>
+          <span>revision <b id="rev-label">${esc(state.revision)}</b></span>
+          <span>${esc(info.connections || 0)} watcher(s)</span>
+          <span>schema: <b id="schema-flag">${state.schema ? "yes" : "none"}</b></span>
+        </div>
+      </div>
+      <span class="spacer"></span>
+      <button class="btn sm" id="meta-btn">Edit</button>
+      <button class="btn sm danger" id="delete-btn">Delete</button>
+    </div>
+    <div class="tabs">
+      <button class="tab" data-tab="config">Configuration</button>
+      <button class="tab" data-tab="schema">Schema</button>
+    </div>
+    <div id="tab-body"></div>
+  `;
+  $("meta-btn").onclick = openMetaModal;
+  $("delete-btn").onclick = deleteApp;
+  c.querySelectorAll(".tab").forEach((t) => {
+    t.onclick = () => switchTab(t.dataset.tab);
+  });
+  switchTab(state.activeTab);
+}
+
+function switchTab(tab) {
+  if (tab !== state.activeTab && !confirmDiscard()) return;
+  state.activeTab = tab;
+  configEd = null;
+  schemaEd = null;
+  document.querySelectorAll(".tab").forEach((t) => {
+    t.classList.toggle("active", t.dataset.tab === tab);
+  });
+  if (tab === "config") renderConfigTab();
+  else renderSchemaTab();
+}
+
+/* ----- Configuration tab ----- */
+function renderConfigTab(text) {
+  const ro = state.readOnly ? "disabled" : "";
+  $("tab-body").innerHTML = `
+    <div id="config-notice"></div>
+    <div class="editor-toolbar">
+      <select class="select" id="config-format" title="Editor format">${fmtOptions(state.configFormat)}</select>
+      <button class="btn sm" id="format-btn">Format</button>
+      <button class="btn sm" id="validate-btn">Validate</button>
+      <button class="btn sm" id="reload-btn">Reload</button>
+      <span class="spacer"></span>
+      <span class="editor-status" id="editor-status"></span>
+      <button class="btn sm primary" id="save-btn" ${ro}>Save</button>
+    </div>
+    <div id="config-host"></div>
+  `;
+  configEd = mountCodeEditor($("config-host"), {
+    value: text !== undefined ? text : state.pristine,
+    language: state.configFormat,
+    readOnly: state.readOnly,
+    onInput: updateDirty,
+  });
+  $("config-format").onchange = (e) => changeConfigFormat(e.target.value);
+  $("format-btn").onclick = formatConfig;
+  $("validate-btn").onclick = validateConfig;
+  $("reload-btn").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
+  $("save-btn").onclick = saveConfig;
+  updateDirty();
+}
+
+async function changeConfigFormat(fmt) {
+  if (fmt === state.configFormat) return;
+  let editorText = "", pristineText = "";
+  try {
+    if (configEd.value.trim())
+      editorText = await convertFormat(configEd.value, state.configFormat, fmt);
+    pristineText = await serialize(state.configObj, fmt);
+  } catch (e) {
+    configNotice('<div class="notice error">Cannot convert to ' + fmt.toUpperCase() +
+      ": " + esc(errText(e)) + "</div>");
+    $("config-format").value = state.configFormat;
+    return;
+  }
+  state.configFormat = fmt;
+  localStorage.setItem("nacho_config_format", fmt);
+  state.pristine = pristineText;
+  renderConfigTab(editorText);
+}
+
+/* ----- Schema tab ----- */
+function renderSchemaTab(text) {
+  const ro = state.readOnly ? "disabled" : "";
+  $("tab-body").innerHTML = `
+    <div id="schema-notice"></div>
+    <div class="editor-toolbar">
+      <select class="select" id="schema-format" title="Editor format">${fmtOptions(state.schemaFormat)}</select>
+      <button class="btn sm" id="schema-format-btn">Format</button>
+      <button class="btn sm" id="schema-clear-btn" ${ro}>Clear schema</button>
+      <span class="spacer"></span>
+      <span class="editor-status" id="schema-status"></span>
+      <button class="btn sm primary" id="schema-save-btn" ${ro}>Save schema</button>
+    </div>
+    <div id="schema-host"></div>
+    <p class="hint">A JSON Schema validates every config write. An empty editor
+      clears the schema. Saving re-checks the current configuration against it.</p>
+  `;
+  schemaEd = mountCodeEditor($("schema-host"), {
+    value: text !== undefined ? text : state.schemaPristine,
+    language: state.schemaFormat,
+    readOnly: state.readOnly,
+    onInput: updateSchemaDirty,
+  });
+  $("schema-format").onchange = (e) => changeSchemaFormat(e.target.value);
+  $("schema-format-btn").onclick = formatSchema;
+  $("schema-clear-btn").onclick = () => { schemaEd.value = ""; updateSchemaDirty(); };
+  $("schema-save-btn").onclick = saveSchema;
+  updateSchemaDirty();
+}
+
+async function changeSchemaFormat(fmt) {
+  if (fmt === state.schemaFormat) return;
+  let editorText = "", pristineText = "";
+  try {
+    if (schemaEd.value.trim())
+      editorText = await convertFormat(schemaEd.value, state.schemaFormat, fmt);
+    if (state.schema) pristineText = await serialize(state.schema, fmt);
+  } catch (e) {
+    schemaNotice('<div class="notice error">Cannot convert to ' + fmt.toUpperCase() +
+      ": " + esc(errText(e)) + "</div>");
+    $("schema-format").value = state.schemaFormat;
+    return;
+  }
+  state.schemaFormat = fmt;
+  localStorage.setItem("nacho_schema_format", fmt);
+  state.schemaPristine = pristineText;
+  renderSchemaTab(editorText);
+}
+
+/* ----- Dirty tracking ----- */
+function isConfigDirty() { return configEd && configEd.value !== state.pristine; }
+function isSchemaDirty() { return schemaEd && schemaEd.value !== state.schemaPristine; }
+function anyDirty() { return isConfigDirty() || isSchemaDirty(); }
+
+function setStatus(id, dirty) {
+  const s = $(id);
+  if (!s) return;
+  s.textContent = dirty ? "● Unsaved changes" : "Saved";
+  s.classList.toggle("dirty", dirty);
+}
+function updateDirty() { setStatus("editor-status", isConfigDirty()); }
+function updateSchemaDirty() { setStatus("schema-status", isSchemaDirty()); }
+
+function confirmDiscard() {
+  if (!anyDirty()) return true;
+  return confirm("You have unsaved changes. Discard them?");
+}
+
+/* ----- Configuration actions ----- */
+function configNotice(html) { const n = $("config-notice"); if (n) n.innerHTML = html || ""; }
+
+async function formatConfig() {
+  try {
+    if (!configEd.value.trim()) return;
+    configEd.value = await convertFormat(configEd.value, state.configFormat, state.configFormat);
+    updateDirty();
+    configNotice("");
+  } catch (e) {
+    configNotice('<div class="notice error">' + esc(errText(e)) + "</div>");
+  }
+}
+
+async function validateConfig() {
+  try {
+    const { data } = await api("POST",
+      "/api/apps/" + encodeURIComponent(state.selected) + "/validate",
+      { data: configEd.value, format: state.configFormat });
+    if (data.valid) {
+      configNotice('<div class="notice ok">Configuration is valid against the schema.</div>');
+    } else {
+      configNotice('<div class="notice error">Validation failed:<ul>' +
+        data.errors.map((e) => "<li>" + esc(e) + "</li>").join("") + "</ul></div>");
+    }
+  } catch (err) {
+    configNotice('<div class="notice error">' + esc(errText(err)) + "</div>");
+  }
+}
+
+async function saveConfig() {
+  try {
+    const { data } = await api("PUT",
+      "/api/apps/" + encodeURIComponent(state.selected) + "/config",
+      { data: configEd.value, format: state.configFormat, revision: state.revision });
+    applyRevision(data.revision);
+    state.configObj = data.data;
+    state.pristine = await serialize(state.configObj, state.configFormat);
+    configEd.value = state.pristine;
+    updateDirty();
+    configNotice("");
+    toast("Configuration saved (revision " + state.revision + ")");
+    await refreshApps();
+  } catch (err) {
+    if (err.status === 409) {
+      configNotice('<div class="notice warn">' + esc(errText(err)) +
+        '<div class="notice-actions">' +
+        '<button class="btn sm" id="conflict-reload">Reload latest</button></div></div>');
+      $("conflict-reload").onclick = () => loadAppDetail(state.selected);
+    } else {
+      configNotice('<div class="notice error">' + esc(errText(err)) + "</div>");
+    }
+  }
+}
+
+/* ----- Schema actions ----- */
+function schemaNotice(html) { const n = $("schema-notice"); if (n) n.innerHTML = html || ""; }
+
+async function formatSchema() {
+  try {
+    if (!schemaEd.value.trim()) { schemaNotice(""); return; }
+    schemaEd.value = await convertFormat(schemaEd.value, state.schemaFormat, state.schemaFormat);
+    updateSchemaDirty();
+    schemaNotice("");
+  } catch (e) {
+    schemaNotice('<div class="notice error">' + esc(errText(e)) + "</div>");
+  }
+}
+
+async function saveSchema() {
+  const raw = schemaEd.value.trim();
+  const body = { revision: state.revision };
+  if (raw) { body.schema = schemaEd.value; body.schema_format = state.schemaFormat; }
+  else { body.schema = null; }
+  try {
+    const { data } = await api("PUT",
+      "/api/apps/" + encodeURIComponent(state.selected) + "/schema", body);
+    applyRevision(data.revision);
+    state.schema = data.schema;
+    state.schemaPristine = data.schema ? await serialize(data.schema, state.schemaFormat) : "";
+    schemaEd.value = state.schemaPristine;
+    updateSchemaDirty();
+    const flag = $("schema-flag");
+    if (flag) flag.textContent = state.schema ? "yes" : "none";
+    schemaNotice('<div class="notice ok">' +
+      (state.schema ? "Schema saved." : "Schema cleared.") + "</div>");
+    toast("Schema updated (revision " + state.revision + ")");
+    await refreshApps();
+  } catch (err) {
+    if (err.status === 409) {
+      schemaNotice('<div class="notice warn">' + esc(errText(err)) +
+        '<div class="notice-actions">' +
+        '<button class="btn sm" id="schema-conflict-reload">Reload latest</button></div></div>');
+      $("schema-conflict-reload").onclick = () => loadAppDetail(state.selected);
+    } else {
+      // A 400 here usually means the current config violates the new schema.
+      schemaNotice('<div class="notice error">Schema rejected: ' + esc(errText(err)) + "</div>");
+    }
+  }
+}
+
+function applyRevision(rev) {
+  if (rev == null) return;
+  state.revision = rev;
+  const label = $("rev-label");
+  if (label) label.textContent = rev;
+}
+
+async function deleteApp() {
+  const name = state.selected;
+  if (!confirm('Delete app "' + name + '"? This cannot be undone.')) return;
+  try {
+    await api("DELETE", "/api/apps/" + encodeURIComponent(name));
+    closeWs();
+    state.selected = null;
+    $("content").innerHTML =
+      '<div class="empty-state">Select an app, or create one to get started.</div>';
+    await refreshApps();
+    toast('App "' + name + '" deleted');
+  } catch (err) {
+    toast(errText(err));
+  }
+}
+
+/* ===================================================================== */
+/* WebSocket — live updates                                                */
+/* ===================================================================== */
+function closeWs() {
+  clearTimeout(state.wsRetry);
+  if (state.ws) {
+    state.ws.onclose = null;
+    try { state.ws.close(); } catch (_) {}
+    state.ws = null;
+  }
+}
+
+function openWs(name, attempt) {
+  closeWs();
+  attempt = attempt || 0;
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(proto + "://" + location.host + "/ws/" + encodeURIComponent(name));
+  state.ws = ws;
+  ws.onopen = () => { setLive(true); attempt = 0; };
+  ws.onclose = () => {
+    setLive(false);
+    // Reconnect with exponential backoff, and give up after a few tries so a
+    // genuinely unreachable socket does not spam the console forever.
+    if (state.selected === name && attempt < 5) {
+      const delay = Math.min(30000, 2000 * Math.pow(2, attempt));
+      state.wsRetry = setTimeout(() => openWs(name, attempt + 1), delay);
+    }
+  };
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (msg.app !== state.selected) return;
+    if (msg.type === "initial_config" || msg.type === "update") onRemoteUpdate(msg);
+  };
+}
+
+function setLive(on) {
+  const dot = $("live-dot"), label = $("live-label");
+  if (dot) dot.classList.toggle("on", on);
+  if (label) label.textContent = on ? "live" : "offline";
+}
+
+async function onRemoteUpdate(msg) {
+  applyRevision(msg.revision);
+  if (msg.data !== undefined) {
+    state.configObj = msg.data;
+    if (state.activeTab === "config" && configEd) {
+      let incoming;
+      try { incoming = await serialize(msg.data, state.configFormat); }
+      catch (_) { incoming = JSON.stringify(msg.data, null, 2); }
+      if (!isConfigDirty()) {
+        state.pristine = incoming;
+        configEd.value = incoming;
+        updateDirty();
+      } else {
+        state.pristine = incoming;
+        configNotice('<div class="notice warn">This config changed on the server ' +
+          "(revision " + esc(msg.revision) + "). Your unsaved edits are still here." +
+          '<div class="notice-actions">' +
+          '<button class="btn sm" id="accept-remote">Load server version</button></div></div>');
+        $("accept-remote").onclick = () => {
+          configEd.value = incoming;
+          updateDirty();
+          configNotice("");
+        };
+      }
+    }
+  }
+  // The schema is not carried in WS payloads — refresh it when it may be stale.
+  if (state.activeTab === "schema" && schemaEd && !isSchemaDirty()) {
+    try {
+      const sch = await api("GET",
+        "/api/apps/" + encodeURIComponent(state.selected) + "/schema");
+      state.schema = sch.data.data.schema;
+      state.schemaPristine = state.schema
+        ? await serialize(state.schema, state.schemaFormat) : "";
+      schemaEd.value = state.schemaPristine;
+      updateSchemaDirty();
+      const flag = $("schema-flag");
+      if (flag) flag.textContent = state.schema ? "yes" : "none";
+    } catch (_) { /* leave the current view as-is */ }
+  }
+}
+
+/* ===================================================================== */
+/* Modals                                                                  */
+/* ===================================================================== */
+function openModal(html) {
+  const ov = $("modal-overlay");
+  ov.innerHTML = '<div class="modal">' + html + "</div>";
+  ov.classList.remove("hidden");
+  ov.onclick = (e) => { if (e.target === ov) closeModal(); };
+  // Pull focus off whatever was behind the overlay (e.g. a code editor) so
+  // keystrokes land in the modal, not the editor underneath it.
+  if (document.activeElement && document.activeElement.blur) {
+    document.activeElement.blur();
+  }
+  const first = ov.querySelector("input, textarea, select, button");
+  if (first) first.focus();
+  // Keep Tab focus inside the modal while it is open.
+  ov.onkeydown = (e) => {
+    if (e.key !== "Tab") return;
+    const f = ov.querySelectorAll("input, textarea, select, button");
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault(); first.focus();
+    }
+  };
+}
+function closeModal() {
+  $("modal-overlay").classList.add("hidden");
+  $("modal-overlay").innerHTML = "";
+}
+
+// Convert a plain modal textarea between formats, tracking the current format
+// in a data attribute so the next switch knows the source format.
+async function changeModalFormat(taId, selId) {
+  const ta = $(taId), sel = $(selId);
+  const from = ta.dataset.fmt || "json";
+  const to = sel.value;
+  if (from === to) return;
+  if (ta.value.trim()) {
+    try { ta.value = await convertFormat(ta.value, from, to); }
+    catch (e) {
+      $("m-error").textContent = "Cannot convert to " + to.toUpperCase() + ": " + errText(e);
+      sel.value = from;
+      return;
+    }
+  }
+  ta.dataset.fmt = to;
+  $("m-error").textContent = "";
+}
+
+function openNewAppModal() {
+  openModal(`
+    <h3>New app</h3>
+    <div class="field">
+      <label>Name (letters, digits, <code>-</code>, <code>_</code>)</label>
+      <input class="input" id="m-name" placeholder="my-service" />
+    </div>
+    <div class="field">
+      <label>Description (optional)</label>
+      <input class="input" id="m-desc" />
+    </div>
+    <div class="field">
+      <div class="field-head">
+        <label>Initial configuration</label>
+        <select class="select mini" id="m-config-format">${fmtOptions("json")}</select>
+      </div>
+      <textarea class="input code" id="m-config" rows="6" data-fmt="json">{}</textarea>
+    </div>
+    <div class="field">
+      <div class="field-head">
+        <label>Schema (optional)</label>
+        <select class="select mini" id="m-schema-format">${fmtOptions("json")}</select>
+      </div>
+      <textarea class="input code" id="m-schema" rows="5" data-fmt="json"
+        placeholder="Leave empty for no schema"></textarea>
+    </div>
+    <div class="modal-error" id="m-error"></div>
+    <div class="modal-actions">
+      <button class="btn" id="m-cancel">Cancel</button>
+      <button class="btn primary" id="m-create">Create app</button>
+    </div>
+  `);
+  $("m-config-format").onchange = () => changeModalFormat("m-config", "m-config-format");
+  $("m-schema-format").onchange = () => changeModalFormat("m-schema", "m-schema-format");
+  $("m-cancel").onclick = closeModal;
+  $("m-create").onclick = createApp;
+  $("m-name").focus();
+}
+
+async function createApp() {
+  const name = $("m-name").value.trim();
+  const desc = $("m-desc").value.trim();
+  if (!name) { $("m-error").textContent = "Name is required."; return; }
+  const body = {
+    name,
+    data: $("m-config").value.trim() || "{}",
+    format: $("m-config-format").value,
+  };
+  if (desc) body.description = desc;
+  const schemaRaw = $("m-schema").value.trim();
+  if (schemaRaw) {
+    body.schema = schemaRaw;
+    body.schema_format = $("m-schema-format").value;
+  }
+  try {
+    await api("POST", "/api/apps", body);
+    closeModal();
+    await refreshApps();
+    await selectApp(name);
+    toast('App "' + name + '" created');
+  } catch (e) {
+    $("m-error").textContent = errText(e);
+  }
+}
+
+function openMetaModal() {
+  const info = state.apps[state.selected] || {};
+  openModal(`
+    <h3>Edit app</h3>
+    <div class="field">
+      <label>Name</label>
+      <input class="input" id="m-name" value="${esc(state.selected)}" />
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <input class="input" id="m-desc" value="${esc(info.description || "")}" />
+    </div>
+    <div class="modal-error" id="m-error"></div>
+    <div class="modal-actions">
+      <button class="btn" id="m-cancel">Cancel</button>
+      <button class="btn primary" id="m-save">Save</button>
+    </div>
+  `);
+  $("m-cancel").onclick = closeModal;
+  $("m-save").onclick = saveMeta;
+}
+
+async function saveMeta() {
+  const name = $("m-name").value.trim();
+  const desc = $("m-desc").value.trim();
+  if (!name) { $("m-error").textContent = "Name is required."; return; }
+  try {
+    const { data } = await api("PATCH",
+      "/api/apps/" + encodeURIComponent(state.selected) + "/metadata",
+      { name, description: desc, revision: state.revision });
+    closeModal();
+    const renamed = data.app.name !== state.selected;
+    state.selected = data.app.name;
+    state.revision = data.app.revision;
+    await refreshApps();
+    if (renamed) { closeWs(); openWs(state.selected); }
+    renderAppList();
+    await loadAppDetail(state.selected);
+    toast("App updated");
+  } catch (e) {
+    $("m-error").textContent = errText(e);
+  }
+}
+
+$("new-app-btn").onclick = openNewAppModal;
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("modal-overlay").classList.contains("hidden")) closeModal();
+});
+window.addEventListener("beforeunload", (e) => {
+  if (anyDirty()) { e.preventDefault(); e.returnValue = ""; }
+});
+
+/* ===================================================================== */
+/* Go                                                                      */
+/* ===================================================================== */
+boot();
+</script>
+</body>
+</html>
