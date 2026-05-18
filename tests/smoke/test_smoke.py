@@ -37,14 +37,16 @@ def test_version_matches_metadata():
 
 
 def test_cli_help_runs():
-    """``nacho --help`` exits cleanly via the module entry point."""
+    """``nacho`` prints usage via the module entry point."""
     result = subprocess.run(
         [sys.executable, "-m", "nacho.cli.main"],
         capture_output=True,
         text=True,
     )
     # No subcommand prints help and returns 1; that is expected smoke behaviour.
-    assert "Nacho" in (result.stdout + result.stderr)
+    output = result.stdout + result.stderr
+    assert "usage: nacho" in output
+    assert "server" in output
 
 
 def test_server_app_constructs_and_health_ok():

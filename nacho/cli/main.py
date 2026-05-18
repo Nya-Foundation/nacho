@@ -21,6 +21,23 @@ from nacho.utils.io import save_file
 
 LOGGER = logging.getLogger("nacho.cli")
 
+BANNER = r"""
+ _   _     _      ____  _   _   ___
+| \ | |   / \    / ___|| | | | / _ \
+|  \| |  / _ \  | |    | |_| || | | |
+| |\  | / ___ \ | |___ |  _  || |_| |
+|_| \_|/_/   \_\ \____||_| |_| \___/
+"""
+
+
+def banner() -> str:
+    """Return the ASCII banner with a version tagline."""
+    return (
+        f"{BANNER}"
+        f"  Lightweight, schema-first dynamic configuration  ·  v{__version__}\n"
+    )
+
+
 BUILT_IN_TEMPLATES = {
     "empty": {
         "name": "Empty Configuration",
@@ -89,7 +106,11 @@ def create_parser() -> argparse.ArgumentParser:
     """
     Create the main argument parser.
     """
-    parser = argparse.ArgumentParser(description="Nacho - Simple configuration management")
+    parser = argparse.ArgumentParser(
+        prog="nacho",
+        description=banner(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
         "--debug",
@@ -229,7 +250,7 @@ def create_config(
     """
     if remote_url:
         if not HAS_REMOTE_DEPS:
-            raise ImportError("Remote features require: pip install nacho[remote]")
+            raise ImportError("Remote features require: pip install nacho-python[remote]")
         from nacho.storage.remote import RemoteStorageBackend
 
         storage = RemoteStorageBackend(
@@ -294,7 +315,7 @@ def remote_get(
     key: Optional[str] = None,
 ) -> tuple[Any, Optional[int]]:
     if not HAS_REMOTE_DEPS:
-        raise ImportError("Remote features require: pip install nacho[remote]")
+        raise ImportError("Remote features require: pip install nacho-python[remote]")
     import requests
 
     response = requests.get(
@@ -320,7 +341,7 @@ def remote_set(
     revision: Optional[int] = None,
 ) -> int:
     if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho[remote]")
+        print("Remote connection requires: pip install nacho-python[remote]")
         return 1
     import requests
 
@@ -349,7 +370,7 @@ def remote_delete(
     revision: Optional[int] = None,
 ) -> int:
     if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho[remote]")
+        print("Remote connection requires: pip install nacho-python[remote]")
         return 1
     import requests
 
@@ -373,8 +394,10 @@ def cmd_server(args: argparse.Namespace) -> int:
     Handle server command.
     """
     if not HAS_SERVER_DEPS:
-        print("Server features require: pip install nacho[server]")
+        print("Server features require: pip install nacho-python[server]")
         return 1
+
+    print(banner())
 
     apps = None
     config: Optional[Nacho] = None
@@ -406,7 +429,7 @@ def cmd_connect(args: argparse.Namespace) -> int:
     """
 
     if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho[remote]")
+        print("Remote connection requires: pip install nacho-python[remote]")
         return 1
 
     if not args.remote:
@@ -530,7 +553,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     Handle validate command.
     """
     if not HAS_SCHEMA_DEPS:
-        print("Schema validation requires: pip install nacho[schema]")
+        print("Schema validation requires: pip install nacho-python[schema]")
         return 1
 
     try:

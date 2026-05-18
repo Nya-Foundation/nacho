@@ -1,7 +1,14 @@
 # Nacho
 
+```text
+ _   _     _      ____  _   _   ___
+| \ | |   / \    / ___|| | | | / _ \
+|  \| |  / _ \  | |    | |_| || | | |
+| |\  | / ___ \ | |___ |  _  || |_| |
+|_| \_|/_/   \_\ \____||_| |_| \___/
+```
+
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Nya-Foundation/nacho/main/assets/banner.png" width="800" />
 
   <h3>Python 向けの軽量・スキーマファーストな動的構成サービス。</h3>
 
