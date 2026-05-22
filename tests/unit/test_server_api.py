@@ -793,3 +793,20 @@ def test_single_nacho_instance_is_wrapped_as_default_app():
     orchestrator = NachoOrchestrator(apps=Nacho({"x": 1}, events=True))
     with TestClient(orchestrator.app) as client:
         assert client.get("/api/apps/default/config").json() == {"x": 1}
+
+
+def test_orchestrator_mounted_under_subpath_serves_every_route():
+    """Health, UI, API, and WebSocket all stay reachable when mounted at /config."""
+    from fastapi import FastAPI
+
+    parent = FastAPI()
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
+    parent.mount("/config", orchestrator.app)
+
+    with TestClient(parent) as client:
+        assert client.get("/config/health").json()["status"] == "ok"
+        ui = client.get("/config/ui")
+        assert ui.status_code == 200 and "Nacho" in ui.text
+        assert client.get("/config/api/apps/svc/config").json() == {"x": 1}
+        with client.websocket_connect("/config/ws/svc") as ws:
+            assert ws.receive_json()["type"] == "initial_config"
