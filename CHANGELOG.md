@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.0.3 (2026-05-22)
+
+### Bug Fixes
+
+- Update ui url path
+  ([`f02ece8`](https://github.com/Nya-Foundation/nacho/commit/f02ece853debda89c11b98b8ef45c30a9ea9a760))
+
+### Chores
+
+- Doc update..
+  ([`9a5b6fd`](https://github.com/Nya-Foundation/nacho/commit/9a5b6fd47f600923f311117fea1a027117537e90))
+
+
 ## v0.0.2 (2026-05-18)
 
 ### Bug Fixes
