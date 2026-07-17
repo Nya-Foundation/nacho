@@ -6,6 +6,7 @@ import asyncio
 import copy
 import logging
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,11 @@ class RevisionConflictError(RuntimeError):
         self.expected = expected
         self.actual = actual
         super().__init__(f"Revision conflict: expected {expected}, current revision is {actual}")
+
+
+# A subscriber that cannot accept a frame within this window is dropped so it
+# never delays delivery to the other subscribers of the same app.
+_WS_SEND_TIMEOUT = 10.0
 
 
 class WebSocketHub:
@@ -61,18 +67,27 @@ class WebSocketHub:
                 self._loop = None
 
     async def broadcast(self, message: Dict[str, Any]) -> None:
-        stale: List[WebSocket] = []
+        """Send *message* to every subscriber concurrently.
+
+        Sends are gathered so one slow client cannot delay the others, and
+        each send is capped by a timeout so a half-dead connection is
+        dropped instead of stalling the broadcast task forever.
+        """
         with self._lock:
             connections = list(self._connections)
-
-        for websocket in connections:
-            try:
-                await websocket.send_json(message)
-            except Exception as exc:
-                self.logger.warning("WebSocket send failed for %s: %s", self.app_name, exc)
-                stale.append(websocket)
-        for websocket in stale:
-            self.disconnect(websocket)
+        if not connections:
+            return
+        results = await asyncio.gather(
+            *(
+                asyncio.wait_for(websocket.send_json(message), _WS_SEND_TIMEOUT)
+                for websocket in connections
+            ),
+            return_exceptions=True,
+        )
+        for websocket, result in zip(connections, results):
+            if isinstance(result, Exception):
+                self.logger.warning("WebSocket send failed for %s: %s", self.app_name, result)
+                self.disconnect(websocket)
 
     def schedule(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Schedule async WebSocket work on the connection loop when clients exist."""
@@ -121,6 +136,13 @@ class ConfigApp:
 
     def __post_init__(self) -> None:
         self.hub = WebSocketHub(self.name, self.logger)
+        # Serializes mutation + persistence of THIS app only, so writes to
+        # different apps never block each other. Always acquired after (never
+        # while holding, then re-taking) the AppManager lock.
+        self.lock = threading.RLock()
+        # Tombstone: set by AppManager.delete() so a writer that looked the
+        # app up just before deletion cannot resurrect its files on disk.
+        self.deleted = False
 
     def broadcast_update(self) -> None:
         self.hub.schedule(self._broadcast_update)
@@ -319,7 +341,25 @@ class AppManager:
         self.store = AppStore(data_dir)
         self.history = HistoryStore(data_dir, limit=history_limit)
         self._apps: Dict[str, ConfigApp] = {}
+        # Guards the _apps dict and cross-app operations (create/rename/
+        # delete). Per-app work runs under ConfigApp.lock — see _locked_app.
         self._lock = threading.RLock()
+
+    @contextmanager
+    def _locked_app(self, name: str):
+        """Yield the named app with its per-app lock held.
+
+        The manager lock is held only for the lookup, so operations on
+        different apps proceed in parallel while revision check, mutation,
+        and persistence of one app stay atomic. An app deleted while we
+        waited for its lock surfaces as KeyError, exactly like a miss.
+        """
+        with self._lock:
+            app = self._require_app(name)
+        with app.lock:
+            if app.deleted:
+                raise KeyError(name)
+            yield app
 
     @property
     def apps(self) -> Dict[str, ConfigApp]:
@@ -368,7 +408,10 @@ class AppManager:
             if name in self._apps and not replace:
                 raise ValueError(f"App {name!r} already exists")
             if name in self._apps:
-                self._apps[name].cleanup()
+                old = self._apps[name]
+                with old.lock:
+                    old.deleted = True
+                    old.cleanup()
 
             app_config = config or Nacho(config_data or {}, schema=schema)
             app = ConfigApp(
@@ -399,8 +442,7 @@ class AppManager:
         reconciliation loop re-PUTting the same config cannot flush the
         history ring.
         """
-        with self._lock:
-            current = self._require_app(name)
+        with self._locked_app(name) as current:
             self._check_revision(current, expected_revision)
 
             target_schema = schema if schema is not None else current.schema
@@ -436,26 +478,27 @@ class AppManager:
             app = self._apps.get(current_name)
             if app is None:
                 raise KeyError(current_name)
-            self._check_revision(app, expected_revision)
-            changed = False
-            if description is not None and description != app.description:
-                app.description = description
-                changed = True
+            with app.lock:
+                self._check_revision(app, expected_revision)
+                changed = False
+                if description is not None and description != app.description:
+                    app.description = description
+                    changed = True
 
-            renamed = bool(new_name and new_name != current_name)
-            if renamed:
-                validate_app_name(new_name)
-                if new_name in self._apps:
-                    raise ValueError(f"App {new_name!r} already exists")
-                del self._apps[current_name]
-                self.store.delete(current_name)
-                self.history.rename(current_name, new_name)
-                app.name = new_name
-                app.hub.app_name = new_name
-                self._apps[new_name] = app
-                changed = True
+                renamed = bool(new_name and new_name != current_name)
+                if renamed:
+                    validate_app_name(new_name)
+                    if new_name in self._apps:
+                        raise ValueError(f"App {new_name!r} already exists")
+                    del self._apps[current_name]
+                    self.store.delete(current_name)
+                    self.history.rename(current_name, new_name)
+                    app.name = new_name
+                    app.hub.app_name = new_name
+                    self._apps[new_name] = app
+                    changed = True
 
-            self.persist(app, changed=changed, notify=changed)
+                self.persist(app, changed=changed, notify=changed)
             if renamed:
                 # Disconnect subscribers of the old name: their /ws/{old}
                 # endpoint is dead, and a reconnect surfaces a clear
@@ -466,7 +509,7 @@ class AppManager:
 
     def persist(self, app: ConfigApp, *, changed: bool = True, notify: bool = False) -> None:
         should_notify = False
-        with self._lock:
+        with app.lock:
             if changed:
                 app.config.save()
                 app.touch()
@@ -483,8 +526,7 @@ class AppManager:
         *,
         expected_revision: Optional[int] = None,
     ) -> ConfigApp:
-        with self._lock:
-            app = self._require_app(name)
+        with self._locked_app(name) as app:
             self._check_revision(app, expected_revision)
             changed = app.config.replace(data)
             self.persist(app, changed=changed, notify=True)
@@ -502,8 +544,7 @@ class AppManager:
         Re-validates the current configuration against the new schema —
         ``replace()`` raises ValidationError if the config would become invalid.
         """
-        with self._lock:
-            app = self._require_app(name)
+        with self._locked_app(name) as app:
             self._check_revision(app, expected_revision)
             schema_changed = schema != app.schema
             if schema_changed:
@@ -520,8 +561,7 @@ class AppManager:
         *,
         expected_revision: Optional[int] = None,
     ) -> bool:
-        with self._lock:
-            app = self._require_app(name)
+        with self._locked_app(name) as app:
             self._check_revision(app, expected_revision)
             changed = app.config.set(path, value)
             self.persist(app, changed=changed, notify=True)
@@ -534,8 +574,7 @@ class AppManager:
         *,
         expected_revision: Optional[int] = None,
     ) -> bool:
-        with self._lock:
-            app = self._require_app(name)
+        with self._locked_app(name) as app:
             self._check_revision(app, expected_revision)
             deleted = app.config.delete(path)
             if deleted:
@@ -545,12 +584,14 @@ class AppManager:
     def list_history(self, name: str) -> List[Dict[str, Any]]:
         with self._lock:
             self._require_app(name)
-            return self.history.list(name)
+        # Snapshot files are written atomically, so reading outside the app
+        # lock is safe — a concurrent write just isn't in this listing yet.
+        return self.history.list(name)
 
     def get_history_snapshot(self, name: str, revision: int) -> Optional[Dict[str, Any]]:
         with self._lock:
             self._require_app(name)
-            return self.history.get(name, revision)
+        return self.history.get(name, revision)
 
     def rollback(
         self,
@@ -565,8 +606,7 @@ class AppManager:
         revision whose content equals snapshot 41, so the counter stays
         monotonic and the rollback itself is undoable.
         """
-        with self._lock:
-            app = self._require_app(name)
+        with self._locked_app(name) as app:
             self._check_revision(app, expected_revision)
             snapshot = self.history.get(name, revision)
             if snapshot is None:
@@ -583,19 +623,25 @@ class AppManager:
     def delete(self, name: str) -> bool:
         with self._lock:
             app = self._apps.pop(name, None)
-            if app is None:
-                return False
+        if app is None:
+            return False
+        # Take the app lock so an in-flight write finishes (or sees the
+        # tombstone) before the files disappear.
+        with app.lock:
+            app.deleted = True
             app.cleanup()
             self.store.delete(name)
             self.history.delete(name)
-            return True
+        return True
 
     def cleanup(self) -> None:
         with self._lock:
             apps = list(self._apps.values())
             self._apps.clear()
         for app in apps:
-            app.cleanup()
+            with app.lock:
+                app.deleted = True
+                app.cleanup()
 
     def _require_app(self, name: str) -> ConfigApp:
         app = self._apps.get(name)
