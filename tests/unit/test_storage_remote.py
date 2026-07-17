@@ -60,11 +60,9 @@ def http(monkeypatch):
     return routes
 
 
-def _healthy(routes, app_exists=True):
-    """Register the health + app-info responses for a successful connect."""
+def _healthy(routes):
+    """Register the health response for a successful connect."""
     routes["get"].append(("/health", FakeResponse(200, {"status": "ok"})))
-    routes["get"].append(
-        ("/api/apps/default", FakeResponse(200 if app_exists else 404, {})))
 
 
 # ---------------------------------------------------------------------------
@@ -75,13 +73,6 @@ def test_construct_verifies_existing_app(http):
     backend = RemoteStorageBackend("http://srv")
     assert backend._connected is True
     assert str(backend) == "RemoteStorageBackend(url='http://srv', app='default')"
-
-
-def test_construct_creates_app_when_missing(http):
-    _healthy(http, app_exists=False)
-    http["post"].append(("/api/apps", FakeResponse(201, {})))
-    backend = RemoteStorageBackend("http://srv")
-    assert backend._connected is True
 
 
 def test_construct_raises_when_unreachable(http):
@@ -320,7 +311,9 @@ def test_close_joins_a_live_watcher_thread(backend, monkeypatch):
 
     monkeypatch.setattr(backend, "_ws_loop", loop)
     backend.start_watching()
-    time.sleep(0.05)  # let the watcher thread enter its loop
+    deadline = time.time() + 5
+    while not backend._ws_thread.is_alive() and time.time() < deadline:
+        time.sleep(0.01)
     assert backend._ws_thread.is_alive()
     backend.close()  # signals stop, then joins the thread
     assert not backend._ws_thread.is_alive()

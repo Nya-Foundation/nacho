@@ -11,7 +11,6 @@ on:
       - 'pyproject.toml'
       - 'setup.py'
       - 'setup.cfg'
-      - '**/*requirements*.txt'
       - 'Pipfile'
       - 'Pipfile.lock'
   pull_request:
@@ -20,7 +19,6 @@ on:
       - 'pyproject.toml'
       - 'setup.py'
       - 'setup.cfg'
-      - '**/*requirements*.txt'
       - 'Pipfile'
       - 'Pipfile.lock'
   workflow_dispatch:

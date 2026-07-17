@@ -9,7 +9,7 @@ on:
       - 'nacho/**'
       - 'tests/**'
   pull_request:
-    branches: ["dev", "staging"]
+    branches: ["dev", "staging", "main"]
     paths:
       - 'nacho/**'
       - 'tests/**'
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
       fail-fast: false # Ensure all Python versions are tested
     steps:
     - name: Checkout code
@@ -41,10 +41,7 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
-        cache-dependency-path: |
-          pyproject.toml
-          setup.py
-          # Add requirements*.txt if relevant
+        cache-dependency-path: pyproject.toml
 
     - name: Install dependencies
       run: |
@@ -66,3 +63,25 @@ jobs:
         verbose: true
       # Only upload coverage for one Python version to avoid duplicate reports (optional, but common)
       # if: matrix.python-version == '3.12' # Or your primary test version
+  live-tests:
+    name: Integration & E2E (live server)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .[dev]
+
+    - name: Run integration and e2e suites
+      run: |
+        pytest -m "integration or e2e" --no-cov -v

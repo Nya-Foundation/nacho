@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 # Core dependencies only - minimal install
@@ -129,8 +130,6 @@ exclude_lines = [
     "if self.debug:",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
-    "pass",
-    "raise ImportError"
 ]
 
 

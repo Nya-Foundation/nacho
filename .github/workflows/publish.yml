@@ -35,7 +35,6 @@ on:
     - 'tests/**'
     - 'pyproject.toml'
     - 'uv.lock'
-    - 'requirements.txt'
     - 'Dockerfile'
     - 'README*.md'
     - 'MANIFEST.in'
@@ -47,7 +46,33 @@ concurrency:
   cancel-in-progress: false # Do not cancel releases once started
 
 jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+        cache: 'pip'
+        cache-dependency-path: pyproject.toml
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .[dev]
+
+    - name: Run unit and smoke tests
+      run: pytest
+
+    - name: Run integration and e2e suites
+      run: pytest -m "integration or e2e" --no-cov
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
     environment:
       name: Publish and Release

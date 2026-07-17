@@ -299,5 +299,8 @@ async def test_async_handler_dispatched_on_running_loop():
         seen.append(kwargs.get("new_value"))
 
     config.set("x", 2)
-    await asyncio.sleep(0.05)  # let the scheduled task run
+    for _ in range(500):  # bounded wait for the scheduled task, no fixed sleep
+        if 2 in seen:
+            break
+        await asyncio.sleep(0.01)
     assert 2 in seen

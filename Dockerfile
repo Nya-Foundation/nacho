@@ -19,16 +19,14 @@ RUN apk add --no-cache \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy requirements and install external dependencies in the virtual environment
+# Install dependencies first (own layer, cached until pyproject.toml changes)
 COPY pyproject.toml .
 RUN pip install --upgrade pip && \
-    pip install -e .[server,schema]
+    pip install -e .[server,schema,remote]
 
-# Copy the source code
+# Copy the source code and install the package itself
 COPY . .
-
-# Install the package itself (this includes any dependencies not in requirements.txt)
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir .[server,schema,remote]
 
 # Create a non-privileged system user and group for running the application
 RUN addgroup -S nacho && \
@@ -69,6 +67,10 @@ USER nacho
 
 # Expose the Nacho API port
 EXPOSE 8000
+
+# Container-level health probe against the public /health endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
 
 # Command to run the application with the correct module path.
 # --host 0.0.0.0 is required inside a container (the CLI default is loopback).
