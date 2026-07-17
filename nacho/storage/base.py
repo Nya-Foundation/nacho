@@ -67,5 +67,5 @@ class StorageBackend(ABC):
     def save(self, data: Dict[str, Any]) -> None:
         """Persist *data*.  Raises StorageError on failure."""
 
-    def cleanup(self) -> None:
+    def cleanup(self) -> None:  # noqa: B027 - optional hook, default no-op
         """Release resources (connections, threads, file handles).  Optional."""

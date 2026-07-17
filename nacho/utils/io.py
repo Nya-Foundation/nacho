@@ -41,7 +41,7 @@ def load_file(path: Union[str, Path]) -> Dict[str, Any]:
     try:
         suffix = _suffix(path)
         if suffix in (".yaml", ".yml"):
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         if suffix == ".json":
             text = path.read_text(encoding="utf-8")
@@ -50,7 +50,7 @@ def load_file(path: Union[str, Path]) -> Dict[str, Any]:
             with open(path, "rb") as f:
                 return tomllib.load(f) or {}
         # Unknown extension → try YAML
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except (json.JSONDecodeError, yaml.YAMLError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"Failed to parse {path}: {exc}") from exc
@@ -84,7 +84,7 @@ def save_file(path: Union[str, Path], data: Dict[str, Any]) -> None:
         os.chmod(tmp_name, path.stat().st_mode & 0o777 if path.exists() else 0o644)
         os.replace(tmp_name, path)
     except OSError as exc:
-        raise IOError(f"Failed to write {path}: {exc}") from exc
+        raise OSError(f"Failed to write {path}: {exc}") from exc
     finally:
         if tmp_name:
             try:

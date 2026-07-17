@@ -46,7 +46,7 @@ class TestFileStorageBackend:
         import unittest.mock as mock
 
         # Patch at the point of use — where file.py imports save_file
-        with mock.patch("nacho.storage.file.save_file", side_effect=IOError("disk full")):
+        with mock.patch("nacho.storage.file.save_file", side_effect=OSError("disk full")):
             with pytest.raises(StorageError):
                 backend.save({"key": "value"})
 

@@ -61,7 +61,6 @@ class TestSaveFile:
         save_file(p, {"x": 1})
         assert p.exists()
 
-
     def test_unknown_extension_is_parsed_as_yaml(self, tmp_path):
         p = tmp_path / "config.conf"
         p.write_text("key: value\n")
@@ -111,7 +110,7 @@ class TestLoadString:
         assert load_string("a: 1\nb: 2\n", "yaml") == {"a": 1, "b": 2}
 
     def test_toml(self):
-        assert load_string('x = 1\n', "toml") == {"x": 1}
+        assert load_string("x = 1\n", "toml") == {"x": 1}
 
     def test_empty_returns_empty(self):
         assert load_string("", "json") == {}

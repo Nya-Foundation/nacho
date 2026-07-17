@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Strong references to in-flight handler tasks — the event loop only keeps
 # weak ones, so without this a task can be garbage-collected mid-flight.
-_background_tasks: Set["asyncio.Task"] = set()
+_background_tasks: Set[asyncio.Task] = set()
 
 
 def _log_task_result(task: asyncio.Task) -> None:
@@ -178,8 +178,11 @@ class EventHandler:
         self.event_types = event_types
         self.path_pattern = path_pattern
         self.priority = priority
-        self.is_async = inspect.iscoroutinefunction(callback) or (
-            hasattr(callback, "__call__") and inspect.iscoroutinefunction(callback.__call__)
+        # Detect async callable objects too (their __call__ is the coroutine
+        # function); getattr keeps plain functions from raising.
+        call_method = getattr(callback, "__call__", None)  # noqa: B004
+        self.is_async = inspect.iscoroutinefunction(callback) or inspect.iscoroutinefunction(
+            call_method
         )
 
     def matches(self, change: Change) -> bool:
@@ -314,7 +317,7 @@ class Transaction:
     itself called replace()).
     """
 
-    def __init__(self, config: "Any") -> None:
+    def __init__(self, config: Any) -> None:
         self._config = config
         self._data: Dict[str, Any] = copy.deepcopy(config._stored_data)
         self._ops: List[tuple] = []

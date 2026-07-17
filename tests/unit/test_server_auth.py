@@ -2,7 +2,6 @@
 
 import types
 
-
 from nacho.server.auth import AuthGuard
 
 
@@ -45,6 +44,5 @@ class TestAuthGuard:
     def test_verify_websocket_accepts_cookie_then_header(self):
         guard = AuthGuard(api_key="secret")
         assert guard.verify_websocket(_request(cookies={"NACHO_api_key": "secret"})) is True
-        assert guard.verify_websocket(
-            _request(headers={"Authorization": "Bearer secret"})) is True
+        assert guard.verify_websocket(_request(headers={"Authorization": "Bearer secret"})) is True
         assert guard.verify_websocket(_request()) is False

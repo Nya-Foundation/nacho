@@ -104,11 +104,11 @@ class RemoteStorageBackend(StorageBackend):
         self._ensure_connected()
         try:
             data, revision = self._client.get_config()
-        except NotFoundError:
+        except NotFoundError as exc:
             raise StorageError(
                 f"Remote app {self.app_name!r} does not exist on {self._base}. "
                 "Create it first (server UI/API) or write to it with save()."
-            )
+            ) from exc
         if not isinstance(data, dict):
             raise StorageError(f"Remote app {self.app_name!r} returned non-object config")
         with self._rev_lock:

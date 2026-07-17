@@ -1,6 +1,5 @@
 """Tests for environment variable override support."""
 
-
 import pytest
 
 from nacho.env import EnvOverrideHandler

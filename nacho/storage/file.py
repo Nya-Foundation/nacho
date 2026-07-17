@@ -30,12 +30,12 @@ class FileStorageBackend(StorageBackend):
     def load(self) -> Dict[str, Any]:
         try:
             return load_file(self.path)
-        except (ValueError, IOError) as exc:
+        except (OSError, ValueError) as exc:
             raise StorageError(f"Cannot load {self.path}: {exc}") from exc
 
     def save(self, data: Dict[str, Any]) -> None:
         try:
             save_file(self.path, data)
             logger.debug("Saved config to %s", self.path)
-        except (ValueError, IOError) as exc:
+        except (OSError, ValueError) as exc:
             raise StorageError(f"Cannot save {self.path}: {exc}") from exc

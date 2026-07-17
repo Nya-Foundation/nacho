@@ -162,18 +162,14 @@ def test_save_wraps_put_transport_error(http):
 # Revision tracking / optimistic concurrency
 # ---------------------------------------------------------------------------
 def test_load_records_revision_header(http):
-    http["get"].append(
-        ("/config", FakeResponse(200, {"a": 1}, headers={"X-Nacho-Revision": "7"}))
-    )
+    http["get"].append(("/config", FakeResponse(200, {"a": 1}, headers={"X-Nacho-Revision": "7"})))
     backend = RemoteStorageBackend("http://srv")
     backend.load()
     assert backend.revision == 7
 
 
 def test_save_sends_last_seen_revision(http):
-    http["get"].append(
-        ("/config", FakeResponse(200, {"a": 1}, headers={"X-Nacho-Revision": "7"}))
-    )
+    http["get"].append(("/config", FakeResponse(200, {"a": 1}, headers={"X-Nacho-Revision": "7"})))
     http["put"].append(("/config", FakeResponse(200, {"revision": 8})))
     backend = RemoteStorageBackend("http://srv")
     backend.load()
@@ -184,9 +180,7 @@ def test_save_sends_last_seen_revision(http):
 
 
 def test_save_conflict_raises_typed_error(http):
-    http["get"].append(
-        ("/config", FakeResponse(200, {"a": 1}, headers={"X-Nacho-Revision": "7"}))
-    )
+    http["get"].append(("/config", FakeResponse(200, {"a": 1}, headers={"X-Nacho-Revision": "7"})))
     http["put"].append(
         (
             "/config",

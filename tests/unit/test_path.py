@@ -1,6 +1,5 @@
 """Tests for path utilities."""
 
-
 import pytest
 
 from nacho.utils.path import (

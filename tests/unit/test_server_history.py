@@ -98,11 +98,11 @@ def test_unchanged_write_records_nothing(manager):
 def test_rollback_restores_config_and_schema_as_new_revision(manager):
     schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
     manager.create("svc", config_data={"x": 1}, schema=schema)
-    manager.update_schema("svc", None)          # rev 2: schema cleared
-    manager.replace_config("svc", {"x": "s"})   # rev 3: allowed once schema gone
+    manager.update_schema("svc", None)  # rev 2: schema cleared
+    manager.replace_config("svc", {"x": "s"})  # rev 3: allowed once schema gone
 
     app = manager.rollback("svc", 1)
-    assert app.revision == 4                    # roll-forward, never rewound
+    assert app.revision == 4  # roll-forward, never rewound
     assert app.config.get_all() == {"x": 1}
     assert app.schema == schema
     # The rollback itself is in history, so it can be undone.

@@ -286,11 +286,9 @@ class AppStore:
         for path in sorted(self.data_dir.glob("*.json")):
             try:
                 data = load_file(path)
-            except (ValueError, IOError) as exc:
+            except (OSError, ValueError) as exc:
                 # One corrupt file must not take the whole service down.
-                logging.getLogger(__name__).error(
-                    "Skipping unreadable app file %s: %s", path, exc
-                )
+                logging.getLogger(__name__).error("Skipping unreadable app file %s: %s", path, exc)
                 continue
             if data:
                 apps.append(data)
@@ -572,9 +570,7 @@ class AppManager:
             self._check_revision(app, expected_revision)
             snapshot = self.history.get(name, revision)
             if snapshot is None:
-                raise LookupError(
-                    f"Revision {revision} of app {name!r} is not in history"
-                )
+                raise LookupError(f"Revision {revision} of app {name!r} is not in history")
             target_config = snapshot.get("config") or {}
             target_schema = snapshot.get("schema")
             if target_config == app.config.get_all() and target_schema == app.schema:

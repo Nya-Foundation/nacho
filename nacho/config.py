@@ -166,7 +166,7 @@ class Nacho:
     # Context manager
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "Nacho":
+    def __enter__(self) -> Nacho:
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -455,7 +455,7 @@ class Nacho:
     # Transactions
     # ------------------------------------------------------------------
 
-    def transaction(self) -> "_TransactionContext":
+    def transaction(self) -> _TransactionContext:
         """Return a context manager for atomic multi-key updates.
 
         Example::

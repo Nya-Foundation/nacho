@@ -129,8 +129,7 @@ class EnvOverrideHandler:
             # NACHO_DB__MAX_CONNECTIONS → db.max_connections
             parts = tail.split(double)
             if any(
-                not p or p.startswith(self.delimiter) or p.endswith(self.delimiter)
-                for p in parts
+                not p or p.startswith(self.delimiter) or p.endswith(self.delimiter) for p in parts
             ):
                 return None
             return ".".join(parts).lower()

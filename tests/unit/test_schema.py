@@ -1,6 +1,5 @@
 """Tests for schema validation."""
 
-
 import pytest
 
 from nacho.schema import SchemaValidator, ValidationError

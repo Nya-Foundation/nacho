@@ -504,9 +504,7 @@ def test_delete_app_removes_it_and_404_when_absent():
 
 
 def test_delete_app_blocked_in_read_only_mode():
-    orchestrator = NachoOrchestrator(
-        apps={"svc": Nacho({"x": 1}, events=True)}, read_only=True
-    )
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)}, read_only=True)
     with TestClient(orchestrator.app) as client:
         assert client.delete("/api/apps/svc").status_code == 403
 
@@ -591,8 +589,7 @@ def test_delete_path_missing_app_404():
 # Validate endpoint
 # ---------------------------------------------------------------------------
 def test_validate_endpoint_reports_valid_and_invalid():
-    schema = {"type": "object", "properties": {"port": {"type": "integer"}},
-              "required": ["port"]}
+    schema = {"type": "object", "properties": {"port": {"type": "integer"}}, "required": ["port"]}
     orchestrator = NachoOrchestrator()
     with TestClient(orchestrator.app) as client:
         client.post("/api/apps", json={"name": "svc", "data": {"port": 1}, "schema": schema})
@@ -658,9 +655,7 @@ def test_set_path_coerces_typed_values():
 def test_set_path_rejects_bad_conversion():
     orchestrator = NachoOrchestrator(apps={"svc": Nacho({}, events=True)})
     with TestClient(orchestrator.app) as client:
-        response = client.put(
-            "/api/apps/svc/config/n", json={"value": "not-an-int", "type": "int"}
-        )
+        response = client.put("/api/apps/svc/config/n", json={"value": "not-an-int", "type": "int"})
         assert response.status_code == 400
 
 
@@ -697,32 +692,28 @@ def test_metadata_revision_conflict():
 def test_replace_config_revision_conflict():
     orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
     with TestClient(orchestrator.app) as client:
-        response = client.put(
-            "/api/apps/svc/config", json={"data": {"x": 2}, "revision": 99}
-        )
+        response = client.put("/api/apps/svc/config", json={"data": {"x": 2}, "revision": 99})
         assert response.status_code == 409
 
 
 def test_replace_schema_missing_app_404():
     orchestrator = NachoOrchestrator()
     with TestClient(orchestrator.app) as client:
-        assert client.put(
-            "/api/apps/ghost/schema", json={"schema": {"type": "object"}}
-        ).status_code == 404
+        assert (
+            client.put("/api/apps/ghost/schema", json={"schema": {"type": "object"}}).status_code
+            == 404
+        )
 
 
 def test_set_path_bool_rejects_unrecognized_string():
     orchestrator = NachoOrchestrator(apps={"svc": Nacho({}, events=True)})
     with TestClient(orchestrator.app) as client:
-        response = client.put(
-            "/api/apps/svc/config/flag", json={"value": "maybe", "type": "bool"}
-        )
+        response = client.put("/api/apps/svc/config/flag", json={"value": "maybe", "type": "bool"})
         assert response.status_code == 400
 
 
 def test_replace_config_rejects_schema_violation():
-    schema = {"type": "object", "properties": {"port": {"type": "integer"}},
-              "required": ["port"]}
+    schema = {"type": "object", "properties": {"port": {"type": "integer"}}, "required": ["port"]}
     orchestrator = NachoOrchestrator()
     with TestClient(orchestrator.app) as client:
         client.post("/api/apps", json={"name": "svc", "data": {"port": 1}, "schema": schema})
@@ -738,8 +729,7 @@ def test_delete_path_revision_conflict():
 
 
 def test_delete_path_rejecting_schema_violation():
-    schema = {"type": "object", "properties": {"port": {"type": "integer"}},
-              "required": ["port"]}
+    schema = {"type": "object", "properties": {"port": {"type": "integer"}}, "required": ["port"]}
     orchestrator = NachoOrchestrator()
     with TestClient(orchestrator.app) as client:
         client.post("/api/apps", json={"name": "svc", "data": {"port": 1}, "schema": schema})
@@ -822,9 +812,7 @@ def test_rollback_endpoint_error_paths():
 
 
 def test_rollback_rejected_in_read_only_mode():
-    orchestrator = NachoOrchestrator(
-        apps={"svc": Nacho({"x": 1}, events=True)}, read_only=True
-    )
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)}, read_only=True)
     with TestClient(orchestrator.app) as client:
         assert client.post("/api/apps/svc/rollback", json={"revision": 1}).status_code == 403
 
@@ -854,9 +842,7 @@ def test_full_app_replace_broadcasts_to_watchers():
 
 
 def test_history_disabled_with_zero_limit():
-    orchestrator = NachoOrchestrator(
-        apps={"svc": Nacho({"x": 1}, events=True)}, history_limit=0
-    )
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)}, history_limit=0)
     with TestClient(orchestrator.app) as client:
         client.put("/api/apps/svc/config", json={"data": {"x": 2}})
         assert client.get("/api/apps/svc/history").json()["data"] == []

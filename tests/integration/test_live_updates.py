@@ -122,9 +122,7 @@ def test_auth_enforced_over_real_transport(make_live_server):
         _http_json("GET", server.url + "/api/apps/default/config")
     assert exc.value.code == 401
 
-    status, body = _http_json(
-        "GET", server.url + "/api/apps/default/config", api_key="sekret"
-    )
+    status, body = _http_json("GET", server.url + "/api/apps/default/config", api_key="sekret")
     assert status == 200 and body == {}
 
     # The WS handshake carries the bearer header and receives live pushes.
@@ -180,9 +178,7 @@ def test_rollback_on_live_server_reaches_watcher(live_server):
 
     backend, recorder = _watching_backend(live_server)
     try:
-        status, body = _http_json(
-            "GET", live_server + "/api/apps/default/history"
-        )
+        status, body = _http_json("GET", live_server + "/api/apps/default/history")
         assert status == 200
         revisions = [e["revision"] for e in body["data"]]
         target = revisions[-2]  # the {"stage": "v1"} snapshot

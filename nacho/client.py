@@ -245,9 +245,7 @@ class NachoClient:
     def get_history_snapshot(self, revision: int) -> Dict[str, Any]:
         return self.request("GET", self._app(f"/history/{revision}")).json()["data"]
 
-    def rollback(
-        self, revision: int, *, expected_revision: Optional[int] = None
-    ) -> Dict[str, Any]:
+    def rollback(self, revision: int, *, expected_revision: Optional[int] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"revision": revision}
         if expected_revision is not None:
             payload["expected_revision"] = expected_revision

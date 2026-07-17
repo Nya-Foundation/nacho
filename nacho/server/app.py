@@ -154,7 +154,9 @@ class NachoOrchestrator:
                 obj = self._parse_config(request.data, request.from_)
                 text = dump_string(obj, request.to)
             except ValueError as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"format": request.to, "data": text}
 
         @self.app.post("/api/apps", status_code=status.HTTP_201_CREATED)
@@ -170,7 +172,9 @@ class NachoOrchestrator:
                     schema=schema,
                 )
             except (ValueError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": "App created", "app": app.info}
 
         @self.app.get("/api/apps/{app_name}")
@@ -194,11 +198,13 @@ class NachoOrchestrator:
                     expected_revision=request.revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except (ValueError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": "App replaced", "app": app.info}
 
         @self.app.patch("/api/apps/{app_name}/metadata")
@@ -215,18 +221,20 @@ class NachoOrchestrator:
                     expected_revision=request.revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except ValueError as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": "App metadata updated", "app": app.info}
 
         @self.app.delete("/api/apps/{app_name}")
         def delete_app(app_name: str) -> Dict[str, str]:
             self._check_writable()
             if not self.manager.delete(app_name):
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             return {"message": f"App {app_name!r} deleted"}
 
         @self.app.get("/api/apps/{app_name}/config")
@@ -249,11 +257,13 @@ class NachoOrchestrator:
                     expected_revision=request.revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except (ValueError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {
                 "message": "Configuration replaced",
                 "revision": app.revision,
@@ -279,11 +289,13 @@ class NachoOrchestrator:
                     expected_revision=request.revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except (ValueError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": "Schema updated", "revision": app.revision, "schema": app.schema}
 
         @self.app.get("/api/apps/{app_name}/config/{path:path}")
@@ -319,11 +331,13 @@ class NachoOrchestrator:
                 )
                 app = self._get_app(app_name)
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except (ValueError, TypeError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {
                 "message": (
                     "Configuration path updated"
@@ -356,11 +370,13 @@ class NachoOrchestrator:
                     )
                 app = self._get_app(app_name)
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except ValidationError as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": f"Configuration path {path!r} deleted", "revision": app.revision}
 
         @self.app.get("/api/apps/{app_name}/history")
@@ -368,14 +384,14 @@ class NachoOrchestrator:
             try:
                 return {"data": self.manager.list_history(app_name)}
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
 
         @self.app.get("/api/apps/{app_name}/history/{revision}")
         def get_history_snapshot(app_name: str, revision: int) -> Dict[str, Any]:
             try:
                 snapshot = self.manager.get_history_snapshot(app_name, revision)
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             if snapshot is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -393,15 +409,15 @@ class NachoOrchestrator:
                     expected_revision=request.expected_revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except LookupError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
-                )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except ValidationError as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {
                 "message": f"Rolled back to revision {request.revision}",
                 "revision": app.revision,
