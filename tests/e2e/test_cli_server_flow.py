@@ -5,32 +5,45 @@ binary, the HTTP client, and a real server process — exactly as a user would.
 """
 
 import json
+import os
 import shutil
 import subprocess
 
 import pytest
 
 nacho_bin = shutil.which("nacho")
+if nacho_bin is None and os.environ.get("CI"):
+    # In CI a missing binary means a broken install, not an optional suite —
+    # fail loudly instead of silently collecting zero e2e tests.
+    raise RuntimeError("nacho CLI not on PATH in CI — the editable install is broken")
 pytestmark = pytest.mark.skipif(nacho_bin is None, reason="nacho CLI not on PATH")
 
 
 def _run(*args):
-    return subprocess.run(
-        [nacho_bin, *args], capture_output=True, text=True, timeout=30
-    )
+    return subprocess.run([nacho_bin, *args], capture_output=True, text=True, timeout=30)
 
 
 def test_cli_set_get_against_live_server(live_server):
     """`nacho set` then `nacho get --remote` round-trips a typed value."""
     set_result = _run(
-        "set", "feature.enabled", "true",
-        "--remote", live_server, "--app-name", "default",
+        "set",
+        "feature.enabled",
+        "true",
+        "--remote",
+        live_server,
+        "--app-name",
+        "default",
     )
     assert set_result.returncode == 0, set_result.stderr
 
     get_result = _run(
-        "get", "--format", "json",
-        "--remote", live_server, "--app-name", "default",
+        "get",
+        "--format",
+        "json",
+        "--remote",
+        live_server,
+        "--app-name",
+        "default",
     )
     assert get_result.returncode == 0, get_result.stderr
     assert json.loads(get_result.stdout) == {"feature": {"enabled": True}}
@@ -39,17 +52,28 @@ def test_cli_set_get_against_live_server(live_server):
 def test_cli_app_and_schema_lifecycle(live_server, tmp_path):
     """apps create → schema push → invalid write refused → validate --remote."""
     schema_file = tmp_path / "schema.json"
-    schema_file.write_text(json.dumps({
-        "type": "object",
-        "properties": {"port": {"type": "integer"}},
-        "required": ["port"],
-    }))
+    schema_file.write_text(
+        json.dumps(
+            {
+                "type": "object",
+                "properties": {"port": {"type": "integer"}},
+                "required": ["port"],
+            }
+        )
+    )
     config_file = tmp_path / "config.json"
     config_file.write_text(json.dumps({"port": 8080}))
 
     created = _run(
-        "apps", "create", "svc", "--remote", live_server,
-        "--config", str(config_file), "--schema", str(schema_file),
+        "apps",
+        "create",
+        "svc",
+        "--remote",
+        live_server,
+        "--config",
+        str(config_file),
+        "--schema",
+        str(schema_file),
     )
     assert created.returncode == 0, created.stderr
 
@@ -64,8 +88,13 @@ def test_cli_app_and_schema_lifecycle(live_server, tmp_path):
 
     # The local file validates against the schema the server enforces.
     valid = _run(
-        "validate", "--config", str(config_file),
-        "--remote", live_server, "--app-name", "svc",
+        "validate",
+        "--config",
+        str(config_file),
+        "--remote",
+        live_server,
+        "--app-name",
+        "svc",
     )
     assert valid.returncode == 0, valid.stderr
     assert "successful" in valid.stdout
@@ -73,8 +102,13 @@ def test_cli_app_and_schema_lifecycle(live_server, tmp_path):
     bad_file = tmp_path / "bad.json"
     bad_file.write_text(json.dumps({"port": "nope"}))
     invalid = _run(
-        "validate", "--config", str(bad_file),
-        "--remote", live_server, "--app-name", "svc",
+        "validate",
+        "--config",
+        str(bad_file),
+        "--remote",
+        live_server,
+        "--app-name",
+        "svc",
     )
     assert invalid.returncode == 1
     assert "port" in invalid.stdout
@@ -88,18 +122,33 @@ def test_cli_auth_flow(make_live_server):
     server = make_live_server(api_key="sekret")
 
     denied = _run("get", "--remote", server.url, "--app-name", "default")
-    assert denied.returncode == 1
+    assert denied.returncode == 5  # dedicated auth-failure exit code
     assert "Unauthorized" in denied.stderr
 
     allowed = _run(
-        "set", "answer", "42",
-        "--remote", server.url, "--app-name", "default", "--api-key", "sekret",
+        "set",
+        "answer",
+        "42",
+        "--remote",
+        server.url,
+        "--app-name",
+        "default",
+        "--api-key",
+        "sekret",
     )
     assert allowed.returncode == 0, allowed.stderr
 
     fetched = _run(
-        "get", "answer", "--format", "json",
-        "--remote", server.url, "--app-name", "default", "--api-key", "sekret",
+        "get",
+        "answer",
+        "--format",
+        "json",
+        "--remote",
+        server.url,
+        "--app-name",
+        "default",
+        "--api-key",
+        "sekret",
     )
     assert fetched.returncode == 0, fetched.stderr
     assert json.loads(fetched.stdout) == 42
@@ -109,14 +158,25 @@ def test_cli_history_and_rollback_flow(live_server):
     """set twice, inspect history, roll back, and read the restored value."""
     for value in ("one", "two"):
         result = _run(
-            "set", "release", value,
-            "--remote", live_server, "--app-name", "default",
+            "set",
+            "release",
+            value,
+            "--remote",
+            live_server,
+            "--app-name",
+            "default",
         )
         assert result.returncode == 0, result.stderr
 
     listed = _run(
-        "history", "list", "--format", "json",
-        "--remote", live_server, "--app-name", "default",
+        "history",
+        "list",
+        "--format",
+        "json",
+        "--remote",
+        live_server,
+        "--app-name",
+        "default",
     )
     assert listed.returncode == 0, listed.stderr
     entries = json.loads(listed.stdout)
@@ -124,22 +184,40 @@ def test_cli_history_and_rollback_flow(live_server):
     target = entries[1]["revision"]  # the "one" snapshot
 
     shown = _run(
-        "history", "show", str(target), "--format", "json",
-        "--remote", live_server, "--app-name", "default",
+        "history",
+        "show",
+        str(target),
+        "--format",
+        "json",
+        "--remote",
+        live_server,
+        "--app-name",
+        "default",
     )
     assert shown.returncode == 0, shown.stderr
     assert json.loads(shown.stdout)["config"] == {"release": "one"}
 
     rolled = _run(
-        "rollback", str(target),
-        "--remote", live_server, "--app-name", "default",
-        "--revision-check", str(entries[0]["revision"]),
+        "rollback",
+        str(target),
+        "--remote",
+        live_server,
+        "--app-name",
+        "default",
+        "--revision-check",
+        str(entries[0]["revision"]),
     )
     assert rolled.returncode == 0, rolled.stderr
 
     fetched = _run(
-        "get", "release", "--format", "json",
-        "--remote", live_server, "--app-name", "default",
+        "get",
+        "release",
+        "--format",
+        "json",
+        "--remote",
+        live_server,
+        "--app-name",
+        "default",
     )
     assert fetched.returncode == 0, fetched.stderr
     assert json.loads(fetched.stdout) == "one"

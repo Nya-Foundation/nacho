@@ -3,23 +3,37 @@ Command-line interface for Nacho.
 """
 
 import argparse
+import functools
+import ipaddress
 import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Optional
-from urllib.parse import quote
-
-import yaml
+from typing import TYPE_CHECKING, Any, Callable, List, Optional
 
 from nacho import HAS_REMOTE_DEPS, HAS_SCHEMA_DEPS, HAS_SERVER_DEPS
 from nacho._version import __version__
 from nacho.config import Nacho
+from nacho.env import FALSY_STRINGS, TRUTHY_STRINGS
 from nacho.env import _parse_value as parse_value
 from nacho.server import NachoOrchestrator
-from nacho.utils.io import save_file
+from nacho.storage.base import AuthError, ConflictError, NotFoundError
+from nacho.utils.io import dump_string, load_file, save_file
+from nacho.utils.path import get_nested_value
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from nacho.client import NachoClient
 
 LOGGER = logging.getLogger("nacho.cli")
+
+# Exit codes. EXIT_USAGE is argparse's own code for bad arguments; the rest
+# are produced by the @cli_command wrapper from the typed client errors.
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_USAGE = 2
+EXIT_NOT_FOUND = 3
+EXIT_CONFLICT = 4
+EXIT_AUTH = 5
 
 BANNER = r"""
             _   _     _      ____  _   _   ___
@@ -32,10 +46,7 @@ BANNER = r"""
 
 def banner() -> str:
     """Return the ASCII banner with a version tagline."""
-    return (
-        f"{BANNER}"
-        f"  Lightweight, self-hosted dynamic configuration  ·  v{__version__}\n"
-    )
+    return f"{BANNER}  Lightweight, self-hosted dynamic configuration  ·  v{__version__}\n"
 
 
 BUILT_IN_TEMPLATES = {
@@ -62,31 +73,172 @@ BUILT_IN_TEMPLATES = {
     },
 }
 
+# --type values the server coerces itself; auto/json are parsed client-side.
+_SERVER_TYPE_HINTS = ("str", "int", "float", "bool")
 
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+def cli_command(func: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
+    """The single error-handling path shared by every command handler.
+
+    Prints ``Error: <message>`` to stderr and maps the typed client errors to
+    dedicated exit codes; anything unexpected is a generic failure (1).
+    """
+
+    @functools.wraps(func)
+    def wrapper(args: argparse.Namespace) -> int:
+        try:
+            return func(args)
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            if isinstance(exc, AuthError):
+                return EXIT_AUTH
+            if isinstance(exc, ConflictError):
+                return EXIT_CONFLICT
+            if isinstance(exc, NotFoundError):
+                return EXIT_NOT_FOUND
+            return EXIT_ERROR
+
+    return wrapper
+
+
+def require_remote_deps() -> None:
+    """Fail with an actionable message when the [remote] extra is missing."""
+    if not HAS_REMOTE_DEPS:
+        raise ImportError("Remote features require: pip install nacho-python[remote]")
+
+
+def build_client(args: argparse.Namespace, app_name: Optional[str] = None) -> "NachoClient":
+    """Build the one NachoClient a command uses from --remote/--app-name/--api-key."""
+    require_remote_deps()
+    from nacho.client import NachoClient
+
+    return NachoClient(
+        args.remote,
+        app_name=app_name or getattr(args, "app_name", "default"),
+        api_key=args.api_key,
+    )
+
+
+def create_config(
+    config_path: Optional[str] = None,
+    schema: Optional[str] = None,
+    read_only: bool = False,
+) -> Nacho:
+    """Create a Nacho instance for a local config file."""
+    return Nacho(
+        storage=config_path or "config.yaml",
+        schema=Path(schema) if schema else None,
+        read_only=read_only,
+    )
+
+
+def render(value: Any, fmt: str) -> str:
+    """Serialize *value* for terminal output in the chosen --format."""
+    return dump_string(value, fmt).rstrip("\n")
+
+
+def coerce_value(raw: str, kind: str) -> Any:
+    """Coerce a CLI value string according to ``--type``.
+
+    ``auto`` keeps the historical best-effort parsing (ints, floats, bools,
+    null, quoted strings); ``str`` forces the value to stay a string; ``json``
+    parses the value as a JSON document. Raises ValueError when the value
+    cannot be parsed as the requested type.
+    """
+    if kind == "str":
+        return raw
+    if kind == "int":
+        return int(raw)
+    if kind == "float":
+        return float(raw)
+    if kind == "bool":
+        low = raw.lower()
+        if low in TRUTHY_STRINGS or low == "1":
+            return True
+        if low in FALSY_STRINGS or low == "0":
+            return False
+        raise ValueError(f"Cannot parse {raw!r} as a boolean")
+    if kind == "json":
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON value: {exc}") from exc
+    return parse_value(raw)  # auto
+
+
+def is_loopback_host(host: str) -> bool:
+    """True for "localhost" and loopback IPs (127.0.0.0/8, ::1)."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:  # a hostname — assume it is reachable from outside
+        return False
+
+
+def _validate_remote(client: "NachoClient", data: Any) -> dict:
+    """Run server-side validation, tolerating an empty or non-JSON body."""
+    try:
+        return client.validate(data) or {}
+    except ValueError:  # empty response body
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Argument parser
+# ---------------------------------------------------------------------------
 def create_parser() -> argparse.ArgumentParser:
+    """Create the main argument parser.
+
+    The repeated flag groups (remote access, --format, --revision, --debug)
+    live in parent parsers so each subcommand declares them once.
     """
-    Create the main argument parser.
-    """
+    # SUPPRESS keeps a subcommand's parse from clobbering a top-level
+    # `nacho --debug <command>` with its own False default.
+    debug = argparse.ArgumentParser(add_help=False)
+    debug.add_argument(
+        "--debug", action="store_true", default=argparse.SUPPRESS, help="Enable debug logging"
+    )
+
+    fmt = argparse.ArgumentParser(add_help=False)
+    fmt.add_argument(
+        "--format", "-f", choices=["json", "yaml", "toml"], default="json", help="Output format"
+    )
+
+    revision = argparse.ArgumentParser(add_help=False)
+    revision.add_argument(
+        "--revision", type=int, help="Expected remote app revision for conflict-safe writes"
+    )
+
+    def remote_parent(required: bool = True, app_name: bool = True) -> argparse.ArgumentParser:
+        p = argparse.ArgumentParser(add_help=False)
+        p.add_argument("--remote", required=required, help="Remote server URL")
+        if app_name:
+            p.add_argument("--app-name", default="default", help="Application name on the server")
+        p.add_argument("--api-key", help="API key for remote server")
+        return p
+
+    remote_opt = remote_parent(required=False)
+    remote_req = remote_parent()
+    remote_req_no_app = remote_parent(app_name=False)
+
     parser = argparse.ArgumentParser(
         prog="nacho",
         description=banner(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging",
-    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Server command
-    server = subparsers.add_parser("server", help="Start configuration server")
+    server = subparsers.add_parser("server", parents=[debug], help="Start configuration server")
     server.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Server host (use 0.0.0.0 to listen on all interfaces)",
+        "--host", default="127.0.0.1", help="Server host (use 0.0.0.0 to listen on all interfaces)"
     )
     server.add_argument("--port", type=int, default=8000, help="Server port")
     server.add_argument("--config", "-c", help="Configuration file path")
@@ -100,82 +252,60 @@ def create_parser() -> argparse.ArgumentParser:
         default=50,
         help="Revision snapshots to keep per app for rollback (0 disables history)",
     )
-    server.add_argument(
-        "--read-only",
-        action="store_true",
-        help="Read-only mode",
-    )
-    server.add_argument(
-        "--reload",
-        action="store_true",
-        help="Auto-reload for development",
-    )
+    server.add_argument("--read-only", action="store_true", help="Read-only mode")
+    server.add_argument("--reload", action="store_true", help="Auto-reload for development")
+    server.set_defaults(func=cmd_server)
 
     # Get command
-    get = subparsers.add_parser("get", help="Get configuration value")
+    get = subparsers.add_parser(
+        "get", parents=[debug, remote_opt, fmt], help="Get configuration value"
+    )
     get.add_argument("key", nargs="?", help="Configuration key (optional)")
     get.add_argument("--config", "-c", default="config.yaml", help="Configuration file")
-    get.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
-    get.add_argument("--remote", help="Remote server URL")
-    get.add_argument("--app-name", default="default", help="Application name for remote server")
-    get.add_argument("--api-key", help="API key for remote server")
     get.add_argument(
         "--show-revision",
         action="store_true",
-        help="Include the remote app revision in JSON/YAML output",
+        help="Include the remote app revision in the output",
     )
+    get.set_defaults(func=cmd_get)
 
     # Set command
-    set_parser = subparsers.add_parser("set", help="Set configuration value")
+    set_parser = subparsers.add_parser(
+        "set", parents=[debug, remote_opt, revision], help="Set configuration value"
+    )
     set_parser.add_argument("key", help="Configuration key")
     set_parser.add_argument("value", help="Configuration value")
     set_parser.add_argument("--config", "-c", default="config.yaml", help="Configuration file")
     set_parser.add_argument("--schema", help="Schema file for validation")
-    set_parser.add_argument("--remote", help="Remote server URL")
     set_parser.add_argument(
-        "--app-name", default="default", help="Application name for remote server"
+        "--type",
+        choices=["auto", "str", "int", "float", "bool", "json"],
+        default="auto",
+        help="How to interpret the value (auto = best-effort typing)",
     )
-    set_parser.add_argument("--api-key", help="API key for remote server")
-    set_parser.add_argument(
-        "--revision",
-        type=int,
-        help="Expected remote app revision for conflict-safe writes",
-    )
+    set_parser.set_defaults(func=cmd_set)
 
     # Delete command
-    delete = subparsers.add_parser("delete", help="Delete configuration value")
+    delete = subparsers.add_parser(
+        "delete", parents=[debug, remote_opt, revision], help="Delete configuration value"
+    )
     delete.add_argument("key", help="Configuration key")
     delete.add_argument("--config", "-c", default="config.yaml", help="Configuration file")
     delete.add_argument("--schema", help="Schema file for validation")
-    delete.add_argument("--remote", help="Remote server URL")
-    delete.add_argument("--app-name", default="default", help="Application name for remote server")
-    delete.add_argument("--api-key", help="API key for remote server")
-    delete.add_argument(
-        "--revision",
-        type=int,
-        help="Expected remote app revision for conflict-safe deletes",
-    )
+    delete.set_defaults(func=cmd_delete)
 
     # Validate command
-    validate = subparsers.add_parser("validate", help="Validate configuration")
+    validate = subparsers.add_parser(
+        "validate", parents=[debug, remote_opt], help="Validate configuration"
+    )
     validate.add_argument("--config", "-c", default="config.yaml", help="Configuration file")
     validate.add_argument(
-        "--schema",
-        help="Schema file (optional with --remote: the server's stored schema is used)",
+        "--schema", help="Schema file (optional with --remote: the server's stored schema is used)"
     )
-    validate.add_argument(
-        "--remote",
-        help="Validate against a remote app's schema instead of a local schema file",
-    )
-    validate.add_argument(
-        "--app-name",
-        default="default",
-        help="Application name for remote server",
-    )
-    validate.add_argument("--api-key", help="API key for remote server")
+    validate.set_defaults(func=cmd_validate)
 
     # Init command
-    init = subparsers.add_parser("init", help="Initialize new configuration")
+    init = subparsers.add_parser("init", parents=[debug], help="Initialize new configuration")
     init.add_argument("config", help="Name of the configuration file to create")
     init.add_argument(
         "--template",
@@ -183,297 +313,129 @@ def create_parser() -> argparse.ArgumentParser:
         choices=sorted(BUILT_IN_TEMPLATES),
         help="Built-in template to start from",
     )
+    init.set_defaults(func=cmd_init)
 
     # Apps command group (remote app management)
     apps = subparsers.add_parser("apps", help="Manage apps on a remote server")
     apps_sub = apps.add_subparsers(dest="apps_command", required=True)
 
-    apps_list = apps_sub.add_parser("list", help="List apps on the server")
-    _add_remote_args(apps_list, app_name=False)
-    apps_list.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
+    apps_list = apps_sub.add_parser(
+        "list", parents=[debug, remote_req_no_app, fmt], help="List apps on the server"
+    )
+    apps_list.set_defaults(func=cmd_apps_list)
 
-    apps_create = apps_sub.add_parser("create", help="Create an app on the server")
+    apps_create = apps_sub.add_parser(
+        "create", parents=[debug, remote_req_no_app], help="Create an app on the server"
+    )
     apps_create.add_argument("name", help="App name")
-    _add_remote_args(apps_create, app_name=False)
     apps_create.add_argument("--description", help="App description")
     apps_create.add_argument("--schema", help="JSON Schema file to attach")
     apps_create.add_argument("--config", "-c", help="Initial configuration file")
+    apps_create.set_defaults(func=cmd_apps_create)
 
-    apps_delete = apps_sub.add_parser("delete", help="Delete an app from the server")
+    apps_delete = apps_sub.add_parser(
+        "delete", parents=[debug, remote_req_no_app], help="Delete an app from the server"
+    )
     apps_delete.add_argument("name", help="App name")
-    _add_remote_args(apps_delete, app_name=False)
+    apps_delete.set_defaults(func=cmd_apps_delete)
+
+    apps_show = apps_sub.add_parser(
+        "show", parents=[debug, remote_req, fmt], help="Show an app's info (--app-name)"
+    )
+    apps_show.set_defaults(func=cmd_apps_show)
+
+    apps_rename = apps_sub.add_parser(
+        "rename", parents=[debug, remote_req, revision], help="Rename an app (--app-name)"
+    )
+    apps_rename.add_argument("new_name", help="New app name")
+    apps_rename.set_defaults(func=cmd_apps_rename)
+
+    apps_describe = apps_sub.add_parser(
+        "describe",
+        parents=[debug, remote_req, revision],
+        help="Set an app's description (--app-name)",
+    )
+    apps_describe.add_argument("text", help="New description")
+    apps_describe.set_defaults(func=cmd_apps_describe)
 
     # Schema command group (remote schema management)
     schema = subparsers.add_parser("schema", help="Manage a remote app's schema")
     schema_sub = schema.add_subparsers(dest="schema_command", required=True)
 
-    schema_get = schema_sub.add_parser("get", help="Print the app's stored schema")
-    _add_remote_args(schema_get)
-    schema_get.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
-
-    schema_push = schema_sub.add_parser("push", help="Upload a schema file to the app")
-    schema_push.add_argument("schema_file", help="Schema file (json/yaml/toml)")
-    _add_remote_args(schema_push)
-    schema_push.add_argument(
-        "--revision",
-        type=int,
-        help="Expected remote app revision for conflict-safe updates",
+    schema_get = schema_sub.add_parser(
+        "get", parents=[debug, remote_req, fmt], help="Print the app's stored schema"
     )
+    schema_get.set_defaults(func=cmd_schema_get)
+
+    schema_push = schema_sub.add_parser(
+        "push", parents=[debug, remote_req, revision], help="Upload a schema file to the app"
+    )
+    schema_push.add_argument("schema_file", help="Schema file (json/yaml/toml)")
+    schema_push.set_defaults(func=cmd_schema_push)
 
     # History command group (remote revision history)
     history = subparsers.add_parser("history", help="Inspect a remote app's revision history")
     history_sub = history.add_subparsers(dest="history_command", required=True)
 
-    history_list = history_sub.add_parser("list", help="List stored revisions")
-    _add_remote_args(history_list)
-    history_list.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
+    history_list = history_sub.add_parser(
+        "list", parents=[debug, remote_req, fmt], help="List stored revisions"
+    )
+    history_list.set_defaults(func=cmd_history_list)
 
-    history_show = history_sub.add_parser("show", help="Print one stored revision snapshot")
+    history_show = history_sub.add_parser(
+        "show", parents=[debug, remote_req, fmt], help="Print one stored revision snapshot"
+    )
     history_show.add_argument("revision", type=int, help="Revision number")
-    _add_remote_args(history_show)
-    history_show.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
+    history_show.set_defaults(func=cmd_history_show)
 
     # Rollback command
     rollback = subparsers.add_parser(
         "rollback",
+        parents=[debug, remote_req],
         help="Restore config and schema from a history revision (creates a new revision)",
     )
     rollback.add_argument("revision", type=int, help="History revision to restore")
-    _add_remote_args(rollback)
     rollback.add_argument(
         "--revision-check",
         type=int,
         dest="expected_revision",
         help="Expected current app revision for conflict-safe rollback",
     )
+    rollback.set_defaults(func=cmd_rollback)
 
     # Watch command (live updates)
     watch = subparsers.add_parser(
         "watch",
+        parents=[debug, remote_req],
         help="Stream an app's config over WebSocket (prints the current config, then each update)",
     )
-    _add_remote_args(watch)
+    watch.set_defaults(func=cmd_watch)
 
     return parser
 
 
-def _add_remote_args(p: argparse.ArgumentParser, app_name: bool = True) -> None:
-    p.add_argument("--remote", required=True, help="Remote server URL")
-    if app_name:
-        p.add_argument("--app-name", default="default", help="Application name")
-    p.add_argument("--api-key", help="API key for remote server")
-
-
-def create_config(
-    config_path: Optional[str] = None,
-    schema: Optional[str] = None,
-    read_only: bool = False,
-    remote_url: Optional[str] = None,
-    remote_app_name: Optional[str] = None,
-    api_key: Optional[str] = None,
-) -> Nacho:
-    """
-    Create a Nacho instance from CLI arguments.
-    """
-    if remote_url:
-        if not HAS_REMOTE_DEPS:
-            raise ImportError("Remote features require: pip install nacho-python[remote]")
-        from nacho.storage.remote import RemoteStorageBackend
-
-        storage = RemoteStorageBackend(
-            url=remote_url,
-            app_name=remote_app_name or "default",
-            api_key=api_key,
-        )
-    else:
-        storage = config_path or "config.yaml"
-
-    schema_path = Path(schema) if schema else None
-    return Nacho(
-        storage=storage,
-        schema=schema_path,
-        read_only=read_only,
-    )
-
-
-def format_output(value: Any, format_type: str) -> str:
-    """
-    Format output according to specified format.
-    """
-    if format_type == "json":
-        return json.dumps(value, indent=2)
-    elif format_type == "yaml":
-
-        return yaml.dump(value, default_flow_style=False)
-    else:  # raw
-        return str(value) if not isinstance(value, (dict, list)) else json.dumps(value, indent=2)
-
-
-def remote_headers(api_key: Optional[str]) -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
-
-
-def remote_config_url(remote: str, app_name: str, key: Optional[str] = None) -> str:
-    base = remote.rstrip("/")
-    app = quote(app_name, safe="")
-    if key is None:
-        return f"{base}/api/apps/{app}/config"
-    return f"{base}/api/apps/{app}/config/{quote(key, safe='.')}"
-
-
-def remote_request_error(response: Any) -> str:
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = response.text
-    if isinstance(payload, dict) and "detail" in payload:
-        return str(payload["detail"])
-    return str(payload)
-
-
-def remote_json(
-    method: str,
-    url: str,
-    api_key: Optional[str],
-    payload: Optional[dict] = None,
-    params: Optional[dict] = None,
-) -> Any:
-    """Perform a remote API request and return the parsed JSON body.
-
-    Raises ImportError without the remote extra, RuntimeError on HTTP errors.
-    """
-    if not HAS_REMOTE_DEPS:
-        raise ImportError("Remote features require: pip install nacho-python[remote]")
-    import requests
-
-    response = requests.request(
-        method,
-        url,
-        json=payload,
-        params=params,
-        headers=remote_headers(api_key),
-        timeout=10,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(remote_request_error(response))
-    try:
-        return response.json()
-    except ValueError:  # empty or non-JSON body
-        return None
-
-
-def remote_get(
-    remote: str,
-    app_name: str,
-    api_key: Optional[str],
-    key: Optional[str] = None,
-) -> tuple[Any, Optional[int]]:
-    if not HAS_REMOTE_DEPS:
-        raise ImportError("Remote features require: pip install nacho-python[remote]")
-    import requests
-
-    response = requests.get(
-        remote_config_url(remote, app_name, key),
-        headers=remote_headers(api_key),
-        timeout=10,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(remote_request_error(response))
-    revision = response.headers.get("X-Nacho-Revision")
-    parsed_revision = int(revision) if revision and revision.isdigit() else None
-    payload = response.json()
-    if key is not None:
-        return payload.get("value"), parsed_revision
-    return payload, parsed_revision
-
-
-def remote_set(
-    remote: str,
-    app_name: str,
-    api_key: Optional[str],
-    key: str,
-    value: Any,
-    revision: Optional[int] = None,
-) -> int:
-    if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho-python[remote]", file=sys.stderr)
-        return 1
-    import requests
-
-    payload = {"value": value, "type": "raw"}
-    if revision is not None:
-        payload["revision"] = revision
-    response = requests.put(
-        remote_config_url(remote, app_name, key),
-        json=payload,
-        headers=remote_headers(api_key),
-        timeout=10,
-    )
-    if response.status_code >= 400:
-        print(f"Error: {remote_request_error(response)}", file=sys.stderr)
-        return 1
-    body = response.json()
-    print(f"Set {key} = {value} (revision {body.get('revision')})")
-    return 0
-
-
-def remote_delete(
-    remote: str,
-    app_name: str,
-    api_key: Optional[str],
-    key: str,
-    revision: Optional[int] = None,
-) -> int:
-    if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho-python[remote]", file=sys.stderr)
-        return 1
-    import requests
-
-    params = {"revision": revision} if revision is not None else None
-    response = requests.delete(
-        remote_config_url(remote, app_name, key),
-        params=params,
-        headers=remote_headers(api_key),
-        timeout=10,
-    )
-    if response.status_code >= 400:
-        print(f"Error: {remote_request_error(response)}", file=sys.stderr)
-        return 1
-    body = response.json()
-    print(f"Deleted {key} (revision {body.get('revision')})")
-    return 0
-
-
+# ---------------------------------------------------------------------------
+# Command handlers
+# ---------------------------------------------------------------------------
+@cli_command
 def cmd_server(args: argparse.Namespace) -> int:
-    """
-    Handle server command.
-    """
+    """Handle server command."""
     if not HAS_SERVER_DEPS:
-        print("Server features require: pip install nacho-python[server]", file=sys.stderr)
-        return 1
+        raise ImportError("Server features require: pip install nacho-python[server]")
 
     print(banner())
 
-    apps = None
-    config: Optional[Nacho] = None
-    app_name = args.app_name or "default"
-    if args.host not in ("127.0.0.1", "localhost", "::1") and not args.api_key:
+    if not args.api_key and not is_loopback_host(args.host):
         print(
             "WARNING: serving on a non-loopback interface without --api-key — "
             "anyone who can reach this host has full write access.",
             file=sys.stderr,
         )
 
+    apps = None
     if args.config:
-        config = create_config(
-            args.config,
-            schema=args.schema,
-            read_only=args.read_only,
-        )
-        apps = {app_name: config}
+        config = create_config(args.config, schema=args.schema, read_only=args.read_only)
+        apps = {args.app_name or "default": config}
 
     orchestrator = NachoOrchestrator(
         apps=apps,
@@ -484,307 +446,213 @@ def cmd_server(args: argparse.Namespace) -> int:
         logger=LOGGER,
     )
     orchestrator.run(host=args.host, port=args.port, reload=args.reload)
-    return 0
+    return EXIT_OK
 
 
+@cli_command
 def cmd_get(args: argparse.Namespace) -> int:
-    """
-    Handle get command.
-    """
-    try:
-        if args.remote:
-            value, revision = remote_get(
-                args.remote,
-                args.app_name,
-                args.api_key,
-                args.key,
-            )
-            if getattr(args, "show_revision", False):
-                value = {"revision": revision, "data": value}
-            print(format_output(value, args.format))
-            return 0
-
-        config = create_config(args.config)
+    """Handle get command."""
+    if args.remote:
+        client = build_client(args)
         if args.key:
-            value = config.get(args.key)
+            value, revision = client.get_path(args.key)
         else:
-            value = config.get_all()
-        print(format_output(value, args.format))
-        return 0
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+            value, revision = client.get_config()
+        if args.show_revision:
+            value = {"revision": revision, "data": value}
+    else:
+        data = create_config(args.config).get_all()
+        if args.key:
+            missing = object()
+            value = get_nested_value(data, args.key, missing)
+            if value is missing:
+                raise NotFoundError(f"Key {args.key!r} not found")
+        else:
+            value = data
+
+    print(render(value, args.format))
+    return EXIT_OK
 
 
+@cli_command
 def cmd_set(args: argparse.Namespace) -> int:
-    """
-    Handle set command.
-    """
-    try:
-        parsed_value = parse_value(args.value)
-        if args.remote:
-            return remote_set(
-                args.remote,
-                args.app_name,
-                args.api_key,
-                args.key,
-                parsed_value,
-                getattr(args, "revision", None),
-            )
+    """Handle set command."""
+    if args.remote:
+        client = build_client(args)
+        if args.type in _SERVER_TYPE_HINTS:  # let the server coerce
+            value, value_type = args.value, args.type
+        else:  # auto/json are parsed client-side and stored verbatim
+            value, value_type = coerce_value(args.value, args.type), "raw"
+        body = client.set_path(args.key, value, revision=args.revision, value_type=value_type)
+        note = "" if body.get("changed", True) else ", unchanged"
+        print(
+            f"Set {args.key} = {body.get('value', value)} (revision {body.get('revision')}{note})"
+        )
+        return EXIT_OK
 
-        config = create_config(args.config, schema=args.schema)
-        config.set(args.key, parsed_value)
-
-        config.save()
-        print(f"Set {args.key} = {parsed_value}")
-        return 0
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    value = coerce_value(args.value, args.type)
+    config = create_config(args.config, schema=args.schema)
+    config.set(args.key, value)
+    config.save()
+    print(f"Set {args.key} = {value}")
+    return EXIT_OK
 
 
+@cli_command
 def cmd_delete(args: argparse.Namespace) -> int:
-    """
-    Handle delete command.
-    """
-    try:
-        if args.remote:
-            return remote_delete(
-                args.remote,
-                args.app_name,
-                args.api_key,
-                args.key,
-                getattr(args, "revision", None),
-            )
+    """Handle delete command."""
+    if args.remote:
+        body = build_client(args).delete_path(args.key, revision=args.revision)
+        print(f"Deleted {args.key} (revision {body.get('revision')})")
+        return EXIT_OK
 
-        config = create_config(args.config, schema=args.schema)
-        if config.delete(args.key):
-            config.save()
-            print(f"Deleted {args.key}")
-            return 0
-        print(f"Key '{args.key}' not found", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    config = create_config(args.config, schema=args.schema)
+    if not config.delete(args.key):
+        raise NotFoundError(f"Key {args.key!r} not found")
+    config.save()
+    print(f"Deleted {args.key}")
+    return EXIT_OK
 
 
+@cli_command
 def cmd_validate(args: argparse.Namespace) -> int:
     """Validate a local config file — against a local schema file, or against
     the schema the remote server actually enforces (--remote)."""
-    try:
-        if args.remote:
-            from nacho.utils.io import load_file
+    if args.remote:
+        if not Path(args.config).exists():
+            raise FileNotFoundError(f"Configuration file not found: {args.config}")
+        body = _validate_remote(build_client(args), load_file(args.config))
+        errors = body.get("errors", [])
+    else:
+        if not args.schema:
+            raise ValueError("--schema is required unless --remote is given")
+        if not HAS_SCHEMA_DEPS:
+            raise ImportError("Schema validation requires: pip install nacho-python[schema]")
+        errors = create_config(args.config, schema=args.schema).validate()
 
-            if not Path(args.config).exists():
-                print(f"Error: configuration file not found: {args.config}", file=sys.stderr)
-                return 1
-            data = load_file(args.config)
-            body = remote_json(
-                "POST",
-                f"{args.remote.rstrip('/')}/api/apps/{quote(args.app_name, safe='')}/validate",
-                args.api_key,
-                payload={"data": data},
-            )
-            errors = body.get("errors", [])
-        else:
-            if not args.schema:
-                print("Error: --schema is required unless --remote is given", file=sys.stderr)
-                return 1
-            if not HAS_SCHEMA_DEPS:
-                print(
-                    "Schema validation requires: pip install nacho-python[schema]",
-                    file=sys.stderr,
-                )
-                return 1
-            config = create_config(args.config, schema=args.schema)
-            errors = config.validate()
-
-        if errors:
-            print("Validation failed:")
-            for error in errors:
-                print(f"  - {error}")
-            return 1
-        print("Validation successful")
-        return 0
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    if errors:
+        print("Validation failed:")
+        for error in errors:
+            print(f"  - {error}")
+        return EXIT_ERROR
+    print("Validation successful")
+    return EXIT_OK
 
 
+@cli_command
 def cmd_init(args: argparse.Namespace) -> int:
-    """
-    Handle init command.
-    """
-    try:
-        config_path = Path(args.config)
-
-        if config_path.exists():
-            print(f"Configuration file already exists: {config_path}", file=sys.stderr)
-            return 1
-
-        save_file(config_path, BUILT_IN_TEMPLATES[args.template])
-        print(f"Created configuration file: {config_path}")
-        return 0
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    """Handle init command."""
+    config_path = Path(args.config)
+    if config_path.exists():
+        raise FileExistsError(f"Configuration file already exists: {config_path}")
+    save_file(config_path, BUILT_IN_TEMPLATES[args.template])
+    print(f"Created configuration file: {config_path}")
+    return EXIT_OK
 
 
-def _api_url(remote: str, *segments: str) -> str:
-    parts = "/".join(quote(seg, safe="") for seg in segments)
-    return f"{remote.rstrip('/')}/api/{parts}" if parts else f"{remote.rstrip('/')}/api"
+@cli_command
+def cmd_apps_list(args: argparse.Namespace) -> int:
+    """List apps on the server."""
+    print(render(build_client(args).list_apps(), args.format))
+    return EXIT_OK
 
 
-def cmd_apps(args: argparse.Namespace) -> int:
-    """Manage apps on a remote server (list / create / delete)."""
-    try:
-        if args.apps_command == "list":
-            body = remote_json("GET", _api_url(args.remote, "apps"), args.api_key)
-            apps = body.get("data", {})
-            if args.format in ("json", "yaml"):
-                print(format_output(apps, args.format))
-            elif not apps:
-                print("No apps.")
-            else:
-                for name, info in sorted(apps.items()):
-                    schema_note = "schema" if info.get("schema") else "no schema"
-                    desc = info.get("description") or ""
-                    print(
-                        f"{name}  rev {info.get('revision')}  "
-                        f"{info.get('config_count', 0)} keys  {schema_note}"
-                        + (f"  — {desc}" if desc else "")
-                    )
-            return 0
-
-        if args.apps_command == "create":
-            from nacho.utils.io import load_file
-
-            payload: dict = {"name": args.name, "data": {}}
-            if args.description:
-                payload["description"] = args.description
-            if args.config:
-                payload["data"] = load_file(args.config)
-            if args.schema:
-                payload["schema"] = load_file(args.schema)
-            body = remote_json("POST", _api_url(args.remote, "apps"), args.api_key, payload)
-            print(f"Created app {args.name!r} (revision {body['app']['revision']})")
-            return 0
-
-        if args.apps_command == "delete":
-            remote_json("DELETE", _api_url(args.remote, "apps", args.name), args.api_key)
-            print(f"Deleted app {args.name!r}")
-            return 0
-
-        print(f"Unknown apps command: {args.apps_command}", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+@cli_command
+def cmd_apps_create(args: argparse.Namespace) -> int:
+    """Create an app on the server."""
+    client = build_client(args, app_name=args.name)
+    body = client.create_app(
+        data=load_file(args.config) if args.config else {},
+        schema=load_file(args.schema) if args.schema else None,
+        description=args.description,
+    )
+    print(f"Created app {args.name!r} (revision {body['app']['revision']})")
+    return EXIT_OK
 
 
-def cmd_schema(args: argparse.Namespace) -> int:
-    """Manage a remote app's schema (get / push)."""
-    try:
-        if args.schema_command == "get":
-            body = remote_json(
-                "GET", _api_url(args.remote, "apps", args.app_name, "schema"), args.api_key
-            )
-            print(format_output(body.get("data"), args.format))
-            return 0
-
-        if args.schema_command == "push":
-            from nacho.utils.io import load_file
-
-            if not Path(args.schema_file).exists():
-                print(f"Error: schema file not found: {args.schema_file}", file=sys.stderr)
-                return 1
-            payload: dict = {"schema": load_file(args.schema_file)}
-            if args.revision is not None:
-                payload["revision"] = args.revision
-            body = remote_json(
-                "PUT", _api_url(args.remote, "apps", args.app_name, "schema"), args.api_key, payload
-            )
-            print(f"Schema updated (revision {body.get('revision')})")
-            return 0
-
-        print(f"Unknown schema command: {args.schema_command}", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+@cli_command
+def cmd_apps_delete(args: argparse.Namespace) -> int:
+    """Delete an app from the server."""
+    build_client(args, app_name=args.name).delete_app()
+    print(f"Deleted app {args.name!r}")
+    return EXIT_OK
 
 
-def cmd_history(args: argparse.Namespace) -> int:
-    """Inspect a remote app's revision history (list / show)."""
-    try:
-        if args.history_command == "list":
-            body = remote_json(
-                "GET", _api_url(args.remote, "apps", args.app_name, "history"), args.api_key
-            )
-            entries = body.get("data", [])
-            if args.format in ("json", "yaml"):
-                print(format_output(entries, args.format))
-            elif not entries:
-                print("No history.")
-            else:
-                for entry in entries:
-                    schema_note = "schema" if entry.get("schema") else "no schema"
-                    print(
-                        f"rev {entry['revision']}  {entry.get('updated_at')}  "
-                        f"{entry.get('config_count', 0)} keys  {schema_note}"
-                    )
-            return 0
-
-        if args.history_command == "show":
-            body = remote_json(
-                "GET",
-                _api_url(args.remote, "apps", args.app_name, "history", str(args.revision)),
-                args.api_key,
-            )
-            print(format_output(body.get("data"), args.format))
-            return 0
-
-        print(f"Unknown history command: {args.history_command}", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+@cli_command
+def cmd_apps_show(args: argparse.Namespace) -> int:
+    """Show one app's stored metadata."""
+    print(render(build_client(args).get_app_info(), args.format))
+    return EXIT_OK
 
 
+@cli_command
+def cmd_apps_rename(args: argparse.Namespace) -> int:
+    """Rename an app (conflict-safe with --revision)."""
+    client = build_client(args)
+    body = client.update_metadata(name=args.new_name, revision=args.revision)
+    print(
+        f"Renamed app {client.app_name!r} to {args.new_name!r} (revision {body['app']['revision']})"
+    )
+    return EXIT_OK
+
+
+@cli_command
+def cmd_apps_describe(args: argparse.Namespace) -> int:
+    """Set an app's description (conflict-safe with --revision)."""
+    client = build_client(args)
+    body = client.update_metadata(description=args.text, revision=args.revision)
+    print(f"Updated description of app {client.app_name!r} (revision {body['app']['revision']})")
+    return EXIT_OK
+
+
+@cli_command
+def cmd_schema_get(args: argparse.Namespace) -> int:
+    """Print the app's stored schema."""
+    print(render(build_client(args).get_schema(), args.format))
+    return EXIT_OK
+
+
+@cli_command
+def cmd_schema_push(args: argparse.Namespace) -> int:
+    """Upload a schema file to the app."""
+    if not Path(args.schema_file).exists():
+        raise FileNotFoundError(f"Schema file not found: {args.schema_file}")
+    body = build_client(args).put_schema(load_file(args.schema_file), revision=args.revision)
+    print(f"Schema updated (revision {body.get('revision')})")
+    return EXIT_OK
+
+
+@cli_command
+def cmd_history_list(args: argparse.Namespace) -> int:
+    """List a remote app's stored revisions."""
+    print(render(build_client(args).list_history(), args.format))
+    return EXIT_OK
+
+
+@cli_command
+def cmd_history_show(args: argparse.Namespace) -> int:
+    """Print one stored revision snapshot."""
+    print(render(build_client(args).get_history_snapshot(args.revision), args.format))
+    return EXIT_OK
+
+
+@cli_command
 def cmd_rollback(args: argparse.Namespace) -> int:
     """Restore a remote app's config and schema from a history revision."""
-    try:
-        payload: dict = {"revision": args.revision}
-        if args.expected_revision is not None:
-            payload["expected_revision"] = args.expected_revision
-        body = remote_json(
-            "POST", _api_url(args.remote, "apps", args.app_name, "rollback"),
-            args.api_key, payload,
-        )
-        print(f"{body.get('message')} (now at revision {body.get('revision')})")
-        return 0
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    body = build_client(args).rollback(args.revision, expected_revision=args.expected_revision)
+    print(f"{body.get('message')} (now at revision {body.get('revision')})")
+    return EXIT_OK
 
 
+@cli_command
 def cmd_watch(args: argparse.Namespace) -> int:
     """Stream config updates for an app: current config first, then each change."""
-    if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho-python[remote]", file=sys.stderr)
-        return 1
+    require_remote_deps()
     import threading
 
     from nacho.storage.remote import RemoteStorageBackend
 
-    try:
-        backend = RemoteStorageBackend(
-            url=args.remote, app_name=args.app_name, api_key=args.api_key
-        )
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    backend = RemoteStorageBackend(url=args.remote, app_name=args.app_name, api_key=args.api_key)
 
     def on_change(data: dict) -> None:
         print(json.dumps(data, ensure_ascii=False), flush=True)
@@ -798,42 +666,22 @@ def cmd_watch(args: argparse.Namespace) -> int:
         pass
     finally:
         backend.close()
-    return 0
+    return EXIT_OK
 
 
-def main_cli() -> int:
-    """
-    Main CLI entry point.
-    """
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def main_cli(argv: Optional[List[str]] = None) -> int:
+    """Main CLI entry point."""
     parser = create_parser()
-
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARNING)
 
-    if not args.command:
+    if args.command is None:
         parser.print_help()
-        return 1
-
-    # Command dispatch
-    commands = {
-        "server": cmd_server,
-        "get": cmd_get,
-        "set": cmd_set,
-        "delete": cmd_delete,
-        "validate": cmd_validate,
-        "init": cmd_init,
-        "apps": cmd_apps,
-        "schema": cmd_schema,
-        "history": cmd_history,
-        "rollback": cmd_rollback,
-        "watch": cmd_watch,
-    }
-
-    if args.command in commands:
-        return commands[args.command](args)
-    else:
-        print(f"Unknown command: {args.command}", file=sys.stderr)
-        return 1
+        return EXIT_OK
+    return args.func(args)
 
 
 if __name__ == "__main__":
