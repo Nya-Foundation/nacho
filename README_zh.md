@@ -173,7 +173,9 @@ app.mount("/config", orchestrator.app)   # 配置 API 位于 /config 之下
 
 传入 `--api-key`（或向 `NachoOrchestrator` 传入 `api_key=`）即可为整个 API 启用 Bearer 认证。客户端通过 `Authorization: Bearer <key>` 请求头发送密钥，或使用 UI 为其自身 WebSocket 握手设置的 Cookie。密钥缺失或错误的请求会收到 `401 Unauthorized`。密钥比较采用时序安全（timing-safe）算法。
 
-`/health`、`/ui`、`/docs`、`/redoc` 和 `/openapi.json` 保持公开：API 的接口定义并不是秘密，需要保护的只是其背后的数据。
+`/`、`/health`、`/ui`、`/docs`、`/redoc` 和 `/openapi.json` 保持公开：API 的接口定义并不是秘密，需要保护的只是其背后的数据。
+
+除非通过 `cors_origins=[...]` 显式启用，否则跨源浏览器访问处于禁用状态——内置 UI 与服务器同源，而 SDK 和 CLI 并不是浏览器，因此路过式（drive-by）网页无法触及默认配置的服务器。
 
 ## REST API
 
@@ -317,7 +319,22 @@ def on_feature_change(path, new_value, **kwargs):
     print(f"feature flag updated: {path} = {new_value}")
 ```
 
-建立连接绝不会修改服务器状态。读取不存在的应用会抛出明确的错误（因此拼写错误不会悄悄返回空配置），而对不存在的应用的首次 `save()` 会创建它。如果 WebSocket 连接断开，监听器会自动重连，连续重试次数有上限（`reconnect=0` 表示无限重试），并且每次成功连接后计数器都会重置。
+建立连接绝不会修改服务器状态：错误的 API 密钥会在构建时立即报错，读取不存在的应用会抛出明确的错误（因此拼写错误不会悄悄返回空配置），而对不存在的应用的首次 `save()` 会创建它。
+
+后端具备修订版本感知能力。每次加载和推送都会记录当时看到的服务器修订版本，`save()` 会将其一并发回——如果期间有其他客户端写入，`save()` 会抛出 `ConflictError`（携带服务器的期望/实际修订版本），而不是悄悄覆盖对方的写入。此时调用 `load()`，重新应用你的修改，然后再次保存即可：
+
+```python
+from nacho import ConflictError
+
+try:
+    config.save()
+except ConflictError:
+    config.load()          # 获取并发的变更
+    config.set("my.key", value)
+    config.save()
+```
+
+如果 WebSocket 连接断开，监听器会自动重连，连续重试次数有上限（`reconnect=0` 表示无限重试），并且每次成功连接后计数器都会重置。Keepalive ping 可以检测半开连接；永久性失败（密钥错误、应用被删除）会终止重试循环并输出一条明确的日志，而不是无限重试下去。过期或乱序的推送会被丢弃，因此本地快照绝不会回退。
 
 不使用 SDK 时，CLI 可以完成同样的工作——参见[命令行界面](#命令行界面)。
 
@@ -431,7 +448,7 @@ print(config.json())                             # 导出为 JSON 字符串
 
 ### 事务
 
-将多次写入组合为一个原子操作。代码块正常退出时事务提交，出现任何异常时事务被丢弃：
+将多次写入组合为一个原子操作。代码块正常退出时事务提交，出现任何异常时事务被丢弃。提交时会将事务中的操作重放到*当前*配置之上，因此事务打开期间落地的无关写入会被保留，而不是被丢弃：
 
 ```python
 with config.transaction() as txn:
@@ -459,7 +476,9 @@ config.get_int("database.port")      # 5433
 config.get_bool("features.enabled")  # True
 ```
 
-在无歧义的情况下会进行类型转换：`true`/`false`/`yes`/`no`/`on`/`off` 转换为布尔值，数字字符串转换为数字（`"1"` 是整数 1，而不是布尔值），形似 JSON 的字符串会按 JSON 解析。其余情况保持字符串不变。环境变量覆盖仅是运行时的叠加层：`save()` 持久化的是已存储的配置，而不是叠加后的视图。
+在无歧义的情况下会进行类型转换：`true`/`false`/`yes`/`no`/`on`/`off` 转换为布尔值，数字字符串转换为数字（`"1"` 是整数 1，而不是布尔值），形似 JSON 的字符串会按 JSON 解析。浮点数只有在文本能够往返转换（round-trip）时才会被解析，因此 `MYAPP_VERSION=3.10` 保持为字符串 `"3.10"`；给值加引号（`MYAPP_PORT='"8080"'`）会强制其保持为字符串。其余情况保持字符串不变。
+
+键名本身含有下划线时，嵌套改用双写的分隔符表示：`MYAPP_DB__MAX_CONNECTIONS` 设置的是 `db.max_connections`。环境变量覆盖仅是运行时的叠加层：`save()` 持久化的是已存储的配置，而不是叠加后的视图。
 
 ## 命令行界面
 
@@ -468,7 +487,18 @@ nacho --help
 nacho --version
 ```
 
-每个远程命令都接受 `--remote <url>`、`--app-name <name>`（默认 `default`）和 `--api-key <key>`。错误写入 stderr，失败时以非零状态码退出，因此这些命令可以在脚本和管道中干净地组合使用。
+每个远程命令都接受 `--remote <url>`、`--app-name <name>`（默认 `default`）和 `--api-key <key>`。错误写入 stderr，退出码可区分不同的失败类别，因此脚本无需解析错误消息即可分支处理：
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 成功 |
+| 1 | 一般错误（模式违规、传输失败、缺少 extras） |
+| 2 | 用法错误（错误的标志或参数） |
+| 3 | 未找到（应用、键、路径或历史修订版本不存在） |
+| 4 | 修订版本冲突（并发写入胜出） |
+| 5 | 认证失败（API 密钥错误或缺失、只读服务器） |
+
+输出以 `--format {json,yaml,toml}`（默认 `json`）渲染，因此每条命令的输出都可被机器解析；`nacho get missing.key` 会以退出码 3 结束并向 stderr 写入消息，而不是打印 `None`。
 
 ### 值操作
 
@@ -484,6 +514,10 @@ nacho get --show-revision --format json --remote http://config-server:8000
 nacho set cache.ttl 600 --remote http://config-server:8000 --revision 3
 nacho delete legacy.setting --remote http://config-server:8000 --revision 4
 
+# 当自动检测可能猜错时，强制指定类型
+nacho set app.version 3.10 --type str --remote http://config-server:8000
+nacho set app.flags '{"beta": true}' --type json --remote http://config-server:8000
+
 # 本地文件的等效操作
 nacho set database.port 5432 --config config.yaml
 nacho delete legacy.setting --config config.yaml
@@ -498,6 +532,9 @@ nacho apps create my-service \
   --description "Core service" \
   --config config.yaml \
   --schema schema.json
+nacho apps show --remote http://config-server:8000 --app-name my-service
+nacho apps rename my-service-v2 --remote http://config-server:8000 --app-name my-service
+nacho apps describe "Payments service" --remote http://config-server:8000 --app-name my-service
 nacho apps delete my-service --remote http://config-server:8000
 ```
 
@@ -585,6 +622,10 @@ uv sync --all-extras
 uv run pytest                                  # 快速套件（单元 + 冒烟测试），95% 覆盖率门槛
 uv run pytest -m "integration or e2e" --no-cov # 需要在线服务器的套件
 uv run pytest -m docker --no-cov               # 构建并测试 Docker 镜像
+uv run playwright install chromium             # 一次性下载浏览器
+uv run pytest -m ui --no-cov                   # 基于浏览器的 Web UI 套件
+
+uvx ruff format . && uvx ruff check .          # 格式化与 lint（CI 强制执行）
 ```
 
 分支模型、代码风格和发布流程参见 [CONTRIBUTING.md](CONTRIBUTING.md)。

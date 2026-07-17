@@ -200,8 +200,12 @@ authentication for the whole API. Clients send the key either as an
 its own WebSocket handshake. Requests with a missing or wrong key receive
 `401 Unauthorized`. The comparison is timing-safe.
 
-`/health`, `/ui`, `/docs`, `/redoc`, and `/openapi.json` stay public: the API
-surface is not a secret, only the data behind it.
+`/`, `/health`, `/ui`, `/docs`, `/redoc`, and `/openapi.json` stay public: the
+API surface is not a secret, only the data behind it.
+
+Cross-origin browser access is disabled unless you opt in with
+`cors_origins=[...]` — the bundled UI is same-origin and the SDK/CLI are not
+browsers, so a drive-by web page cannot reach a default server.
 
 ## REST API
 
@@ -365,12 +369,34 @@ def on_feature_change(path, new_value, **kwargs):
     print(f"feature flag updated: {path} = {new_value}")
 ```
 
-Connecting never mutates the server. Reading a nonexistent app raises a clear
-error (so a typo cannot silently return an empty config), while the first
-`save()` to a nonexistent app creates it. If the WebSocket connection drops,
-the watcher reconnects automatically with a bounded number of consecutive
-retries (`reconnect=0` retries forever), and the counter resets on every
-successful connection.
+Connecting never mutates the server: a wrong API key fails loudly at
+construction, reading a nonexistent app raises a clear error (so a typo
+cannot silently return an empty config), and the first `save()` to a
+nonexistent app creates it.
+
+The backend is revision-aware. Every load and push records the server
+revision it saw, and `save()` sends it back — if another client wrote in
+between, `save()` raises `ConflictError` (with the server's expected/actual
+revisions) instead of silently overwriting the other write. Call `load()`,
+reapply your change, and save again:
+
+```python
+from nacho import ConflictError
+
+try:
+    config.save()
+except ConflictError:
+    config.load()          # pick up the concurrent change
+    config.set("my.key", value)
+    config.save()
+```
+
+If the WebSocket connection drops, the watcher reconnects automatically with
+a bounded number of consecutive retries (`reconnect=0` retries forever), and
+the counter resets on every successful connection. Keepalive pings detect
+half-open connections, and permanent failures (bad key, deleted app) stop
+the retry loop with a clear log line instead of retrying forever. Stale or
+out-of-order pushes are dropped, so the local snapshot never rolls backwards.
 
 The CLI covers the same ground without the SDK — see
 [Command-line interface](#command-line-interface).
@@ -497,7 +523,9 @@ print(config.json())                             # export as a JSON string
 ### Transactions
 
 Group multiple writes into one atomic operation. The transaction commits when
-the block exits cleanly and is discarded on any exception:
+the block exits cleanly and is discarded on any exception. Commit replays the
+transaction's operations onto the *current* configuration, so an unrelated
+write that landed while the transaction was open is preserved, not discarded:
 
 ```python
 with config.transaction() as txn:
@@ -529,9 +557,15 @@ config.get_bool("features.enabled")  # True
 
 Values are coerced where unambiguous: `true`/`false`/`yes`/`no`/`on`/`off`
 become booleans, numeric strings become numbers (`"1"` is the integer 1, not
-a boolean), and JSON-looking strings are parsed as JSON. Everything else
-stays a string. Env overrides are runtime-only overlays: `save()` persists
-the stored configuration, not the overlaid view.
+a boolean), and JSON-looking strings are parsed as JSON. Floats are only
+parsed when the text round-trips, so `MYAPP_VERSION=3.10` stays the string
+`"3.10"`, and quoting a value (`MYAPP_PORT='"8080"'`) forces it to stay a
+string. Everything else stays a string.
+
+Keys with underscores in their names use a doubled delimiter for nesting:
+`MYAPP_DB__MAX_CONNECTIONS` sets `db.max_connections`. Env overrides are
+runtime-only overlays: `save()` persists the stored configuration, not the
+overlaid view.
 
 ## Command-line interface
 
@@ -541,8 +575,22 @@ nacho --version
 ```
 
 Every remote command takes `--remote <url>`, `--app-name <name>` (default
-`default`), and `--api-key <key>`. Errors are written to stderr and failures
-exit non-zero, so the commands compose cleanly in scripts and pipelines.
+`default`), and `--api-key <key>`. Errors are written to stderr, and exit
+codes distinguish failure classes so scripts can branch without parsing
+messages:
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Generic error (schema violation, transport failure, missing extras) |
+| 2 | Usage error (bad flags or arguments) |
+| 3 | Not found (missing app, key, path, or history revision) |
+| 4 | Revision conflict (a concurrent write won) |
+| 5 | Authentication failure (bad or missing API key, read-only server) |
+
+Output is rendered in `--format {json,yaml,toml}` (default `json`), so every
+command's output is machine-parseable; `nacho get missing.key` exits 3 with a
+stderr message instead of printing `None`.
 
 ### Values
 
@@ -558,6 +606,10 @@ nacho get --show-revision --format json --remote http://config-server:8000
 nacho set cache.ttl 600 --remote http://config-server:8000 --revision 3
 nacho delete legacy.setting --remote http://config-server:8000 --revision 4
 
+# Force a type when auto-detection would guess wrong
+nacho set app.version 3.10 --type str --remote http://config-server:8000
+nacho set app.flags '{"beta": true}' --type json --remote http://config-server:8000
+
 # Local file equivalents
 nacho set database.port 5432 --config config.yaml
 nacho delete legacy.setting --config config.yaml
@@ -572,6 +624,9 @@ nacho apps create my-service \
   --description "Core service" \
   --config config.yaml \
   --schema schema.json
+nacho apps show --remote http://config-server:8000 --app-name my-service
+nacho apps rename my-service-v2 --remote http://config-server:8000 --app-name my-service
+nacho apps describe "Payments service" --remote http://config-server:8000 --app-name my-service
 nacho apps delete my-service --remote http://config-server:8000
 ```
 
@@ -672,6 +727,10 @@ uv sync --all-extras
 uv run pytest                                  # fast suites (unit + smoke), 95% coverage gate
 uv run pytest -m "integration or e2e" --no-cov # live-server suites
 uv run pytest -m docker --no-cov               # builds and exercises the Docker image
+uv run playwright install chromium             # one-time browser download
+uv run pytest -m ui --no-cov                   # browser-driven web UI suite
+
+uvx ruff format . && uvx ruff check .          # formatting and lint (enforced in CI)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch model, code style, and

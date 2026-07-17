@@ -203,8 +203,13 @@ WebSocket ハンドシェイク用に設定する Cookie を通じて送信し�
 欠落または誤っているリクエストには `401 Unauthorized` が返されます。
 キーの比較はタイミングセーフです。
 
-`/health`、`/ui`、`/docs`、`/redoc`、`/openapi.json` は公開のままです:
+`/`、`/health`、`/ui`、`/docs`、`/redoc`、`/openapi.json` は公開のままです:
 秘密にすべきは API の存在ではなく、その背後にあるデータだからです。
+
+クロスオリジンのブラウザアクセスは、`cors_origins=[...]` でオプトイン
+しない限り無効です — バンドルされた UI は同一オリジンで動作し、SDK や
+CLI はブラウザではないため、ドライブバイの Web ページがデフォルト設定の
+サーバーに到達することはできません。
 
 ## REST API
 
@@ -370,12 +375,36 @@ def on_feature_change(path, new_value, **kwargs):
     print(f"feature flag updated: {path} = {new_value}")
 ```
 
-接続がサーバーの状態を変更することはありません。存在しないアプリの読み取り
-は明確なエラーを送出し（タイプミスが空の設定を静かに返すことはありません）、
-存在しないアプリへの最初の `save()` がそのアプリを作成します。WebSocket
-接続が切断された場合、ウォッチャーは連続リトライ回数の上限付きで自動的に
-再接続し（`reconnect=0` で無制限にリトライ）、接続が成功するたびに
-カウンターはリセットされます。
+接続がサーバーの状態を変更することはありません: 誤った API キーは構築時に
+明確に失敗し、存在しないアプリの読み取りは明確なエラーを送出し（タイプミス
+が空の設定を静かに返すことはありません）、存在しないアプリへの最初の
+`save()` がそのアプリを作成します。
+
+バックエンドはリビジョンを認識します。すべてのロードとプッシュは、その
+とき観測したサーバーリビジョンを記録し、`save()` はそれを送り返します —
+その間に別のクライアントが書き込んでいた場合、`save()` は相手の書き込みを
+静かに上書きする代わりに、（サーバーの期待/実際のリビジョンを含む）
+`ConflictError` を送出します。`load()` を呼び出して変更を適用し直し、
+もう一度保存してください:
+
+```python
+from nacho import ConflictError
+
+try:
+    config.save()
+except ConflictError:
+    config.load()          # 並行して行われた変更を取り込む
+    config.set("my.key", value)
+    config.save()
+```
+
+WebSocket 接続が切断された場合、ウォッチャーは連続リトライ回数の上限付きで
+自動的に再接続し（`reconnect=0` で無制限にリトライ）、接続が成功するたびに
+カウンターはリセットされます。キープアライブの ping がハーフオープンな接続
+を検出し、恒久的な失敗（不正なキー、削除されたアプリ）は永遠にリトライし
+続ける代わりに、明確なログ行を出力してリトライループを停止します。古い
+プッシュや順序が乱れたプッシュは破棄されるため、ローカルスナップショットが
+巻き戻ることはありません。
 
 CLI は SDK なしで同じ操作をカバーします —
 [コマンドラインインターフェース](#コマンドラインインターフェース) を参照
@@ -506,7 +535,9 @@ print(config.json())                             # JSON 文字列としてエク
 
 複数の書き込みを 1 つのアトミックな操作にまとめます。トランザクションは
 ブロックが正常に終了したときにコミットされ、例外が発生した場合は破棄
-されます:
+されます。コミットはトランザクションの操作を*現在の*設定に対して再生する
+ため、トランザクションが開いている間に行われた無関係な書き込みは破棄
+されず、保持されます:
 
 ```python
 with config.transaction() as txn:
@@ -538,9 +569,15 @@ config.get_bool("features.enabled")  # True
 
 値は曖昧でない場合に型変換されます: `true`/`false`/`yes`/`no`/`on`/`off` は
 ブール値になり、数値文字列は数値になり（`"1"` はブール値ではなく整数 1）、
-JSON と見なせる文字列は JSON としてパースされます。それ以外はすべて文字列の
-ままです。環境変数オーバーライドは実行時のみのオーバーレイです: `save()`
-はオーバーレイされたビューではなく、保存されている設定を永続化します。
+JSON と見なせる文字列は JSON としてパースされます。浮動小数点数はテキスト
+がラウンドトリップする場合にのみパースされるため、`MYAPP_VERSION=3.10` は
+文字列 `"3.10"` のままになり、値をクォートする（`MYAPP_PORT='"8080"'`）と
+文字列のまま維持されます。それ以外はすべて文字列のままです。
+
+名前自体にアンダースコアを含むキーは、ネストにデリミタを二重にして使い
+ます: `MYAPP_DB__MAX_CONNECTIONS` は `db.max_connections` を設定します。
+環境変数オーバーライドは実行時のみのオーバーレイです: `save()` は
+オーバーレイされたビューではなく、保存されている設定を永続化します。
 
 ## コマンドラインインターフェース
 
@@ -551,8 +588,22 @@ nacho --version
 
 すべてのリモートコマンドは `--remote <url>`、`--app-name <name>`（デフォルト
 `default`）、`--api-key <key>` を受け取ります。エラーは stderr に書き込まれ、
-失敗時は非ゼロで終了するため、スクリプトやパイプラインの中できれいに
-組み合わせられます。
+終了コードが失敗の種類を区別するため、スクリプトはメッセージを解析せずに
+分岐できます:
+
+| 終了コード | 意味 |
+|---|---|
+| 0 | 成功 |
+| 1 | 一般エラー（スキーマ違反、トランスポート障害、extras の欠落） |
+| 2 | 使い方のエラー（不正なフラグや引数） |
+| 3 | 見つからない（アプリ、キー、パス、履歴リビジョンの欠落） |
+| 4 | リビジョン競合（並行書き込みが勝った） |
+| 5 | 認証失敗（API キーの誤りや欠落、読み取り専用サーバー） |
+
+出力は `--format {json,yaml,toml}`（デフォルト `json`）でレンダリングされる
+ため、すべてのコマンドの出力は機械可読です。`nacho get missing.key` は
+`None` を表示する代わりに、stderr にメッセージを出力して終了コード 3 で
+終了します。
 
 ### 値の操作
 
@@ -568,6 +619,10 @@ nacho get --show-revision --format json --remote http://config-server:8000
 nacho set cache.ttl 600 --remote http://config-server:8000 --revision 3
 nacho delete legacy.setting --remote http://config-server:8000 --revision 4
 
+# 自動検出が誤る可能性がある場合に型を強制する
+nacho set app.version 3.10 --type str --remote http://config-server:8000
+nacho set app.flags '{"beta": true}' --type json --remote http://config-server:8000
+
 # ローカルファイルでの同等の操作
 nacho set database.port 5432 --config config.yaml
 nacho delete legacy.setting --config config.yaml
@@ -582,6 +637,9 @@ nacho apps create my-service \
   --description "Core service" \
   --config config.yaml \
   --schema schema.json
+nacho apps show --remote http://config-server:8000 --app-name my-service
+nacho apps rename my-service-v2 --remote http://config-server:8000 --app-name my-service
+nacho apps describe "Payments service" --remote http://config-server:8000 --app-name my-service
 nacho apps delete my-service --remote http://config-server:8000
 ```
 
@@ -685,6 +743,10 @@ uv sync --all-extras
 uv run pytest                                  # 高速スイート（unit + smoke）、95% カバレッジゲート
 uv run pytest -m "integration or e2e" --no-cov # ライブサーバースイート
 uv run pytest -m docker --no-cov               # Docker イメージのビルドとテスト
+uv run playwright install chromium             # 一度だけのブラウザダウンロード
+uv run pytest -m ui --no-cov                   # ブラウザ駆動の Web UI スイート
+
+uvx ruff format . && uvx ruff check .          # フォーマットと lint（CI で強制）
 ```
 
 ブランチモデル、コードスタイル、リリースプロセスについては
