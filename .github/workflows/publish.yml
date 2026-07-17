@@ -89,8 +89,31 @@ jobs:
     - name: Run docker test suite (builds and exercises the image)
       run: uv run pytest -m docker --no-cov
 
+  ui-tests:
+    name: Web UI test suite
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: "0.7.9"
+        python-version: '3.13'
+        enable-cache: true
+
+    - name: Install locked dependencies
+      run: uv sync --frozen --all-extras
+
+    - name: Install chromium
+      run: uv run playwright install chromium --with-deps
+
+    - name: Run browser UI suite
+      run: uv run pytest -m ui --no-cov
+
   publish:
-    needs: [test, docker-tests]
+    needs: [test, docker-tests, ui-tests]
     runs-on: ubuntu-latest
     environment:
       name: Publish and Release

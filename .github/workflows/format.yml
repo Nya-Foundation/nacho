@@ -3,9 +3,9 @@ name: lint
 
 on:
   push:
-    branches: ["dev", "main"]
+    branches: ["dev", "staging", "main"]
   pull_request:
-    branches: ["dev", "main"]
+    branches: ["dev", "staging", "main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

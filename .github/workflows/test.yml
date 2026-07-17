@@ -10,6 +10,8 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - 'uv.lock'
+      - 'Dockerfile'
+      - '.dockerignore'
   pull_request:
     branches: ["dev", "staging", "main"]
     paths:
@@ -17,6 +19,8 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - 'uv.lock'
+      - 'Dockerfile'
+      - '.dockerignore'
 
   workflow_dispatch:
 
@@ -66,8 +70,14 @@ jobs:
         flags: unittests
         verbose: true
   live-tests:
-    name: Integration & E2E (live server)
+    name: Integration & E2E (live server, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      # Oldest supported + current release: live behavior (sockets, asyncio,
+      # subprocesses) is where version differences actually show up.
+      matrix:
+        python-version: ['3.9', '3.13']
+      fail-fast: false
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -76,7 +86,7 @@ jobs:
       uses: astral-sh/setup-uv@v6
       with:
         version: "0.7.9"
-        python-version: '3.13'
+        python-version: ${{ matrix.python-version }}
         enable-cache: true
 
     - name: Install locked dependencies
@@ -107,3 +117,40 @@ jobs:
 
     - name: Run browser UI suite
       run: uv run pytest -m ui --no-cov -v
+
+  docker-tests:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # The docker suite builds the full image (~minutes), so it only runs when
+    # something that shapes the image changed; everything else in this
+    # workflow still covers the Python code itself.
+    - name: Detect image-affecting changes
+      id: changes
+      uses: dorny/paths-filter@v3
+      with:
+        filters: |
+          docker:
+            - 'Dockerfile'
+            - '.dockerignore'
+            - 'tests/docker/**'
+            - 'uv.lock'
+
+    - name: Set up uv
+      if: steps.changes.outputs.docker == 'true'
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: "0.7.9"
+        python-version: '3.13'
+        enable-cache: true
+
+    - name: Install locked dependencies
+      if: steps.changes.outputs.docker == 'true'
+      run: uv sync --frozen --all-extras
+
+    - name: Run docker test suite (builds and exercises the image)
+      if: steps.changes.outputs.docker == 'true'
+      run: uv run pytest -m docker --no-cov -v
