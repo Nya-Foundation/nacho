@@ -105,6 +105,89 @@ def test_auth_protects_api_routes():
         assert response.json() == {"x": 1}
 
 
+def test_read_only_api_key_allows_reads_blocks_writes():
+    orchestrator = NachoOrchestrator(
+        apps={"svc": Nacho({"x": 1}, events=True)},
+        api_key="admin-key",
+        read_only_api_key="ro-key",
+    )
+
+    with TestClient(orchestrator.app) as client:
+        ro = {"Authorization": "Bearer ro-key"}
+        assert client.get("/api/apps/svc/config", headers=ro).status_code == 200
+
+        denied = client.put("/api/apps/svc/config", json={"data": {"x": 2}}, headers=ro)
+        assert denied.status_code == 403
+        assert "read-only" in denied.json()["detail"]
+
+        # The admin key still writes; no valid key at all is still a 401.
+        admin = {"Authorization": "Bearer admin-key"}
+        assert (
+            client.put("/api/apps/svc/config", json={"data": {"x": 2}}, headers=admin).status_code
+            == 200
+        )
+        assert client.put("/api/apps/svc/config", json={"data": {"x": 3}}).status_code == 401
+
+        # WebSocket subscriptions are reads: the read-only key is enough.
+        with client.websocket_connect("/ws/svc", headers=ro) as websocket:
+            assert websocket.receive_json()["type"] == "initial_config"
+
+
+def test_read_only_api_key_alone_still_requires_auth():
+    orchestrator = NachoOrchestrator(
+        apps={"svc": Nacho({"x": 1}, events=True)},
+        read_only_api_key="ro-key",
+    )
+
+    with TestClient(orchestrator.app) as client:
+        assert client.get("/api/apps/svc/config").status_code == 401
+        ro = {"Authorization": "Bearer ro-key"}
+        assert client.get("/api/apps/svc/config", headers=ro).status_code == 200
+        # With no admin key configured, nothing can write.
+        assert (
+            client.put("/api/apps/svc/config", json={"data": {"x": 2}}, headers=ro).status_code
+            == 403
+        )
+
+
+def test_oversized_request_body_is_rejected():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({}, events=True)})
+
+    with TestClient(orchestrator.app) as client:
+        blob = "x" * (2 * 1024 * 1024 + 1024)
+        response = client.put("/api/apps/svc/config", json={"data": {"blob": blob}})
+        assert response.status_code == 413
+        assert "exceeds" in response.json()["detail"]
+
+
+def test_conditional_get_returns_304_until_revision_moves():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
+
+    with TestClient(orchestrator.app) as client:
+        first = client.get("/api/apps/svc/config")
+        etag = first.headers["ETag"]
+
+        cached = client.get("/api/apps/svc/config", headers={"If-None-Match": etag})
+        assert cached.status_code == 304
+        assert cached.headers["ETag"] == etag
+        assert not cached.content
+
+        # A weak-form tag and a list of tags must also match.
+        weak = client.get("/api/apps/svc/config", headers={"If-None-Match": f'W/{etag}, "9999"'})
+        assert weak.status_code == 304
+
+        assert client.put("/api/apps/svc/config", json={"data": {"x": 2}}).status_code == 200
+        fresh = client.get("/api/apps/svc/config", headers={"If-None-Match": etag})
+        assert fresh.status_code == 200
+        assert fresh.json() == {"x": 2}
+
+        # The single-path endpoint honours If-None-Match the same way.
+        path_cached = client.get(
+            "/api/apps/svc/config/x", headers={"If-None-Match": fresh.headers["ETag"]}
+        )
+        assert path_cached.status_code == 304
+
+
 def test_websocket_auth_rejects_query_string_api_key():
     orchestrator = NachoOrchestrator(
         apps={"svc": Nacho({"x": 1}, events=True)},

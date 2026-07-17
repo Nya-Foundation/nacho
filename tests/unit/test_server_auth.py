@@ -2,7 +2,7 @@
 
 import types
 
-from nacho.server.auth import AuthGuard
+from nacho.server.auth import ROLE_ADMIN, ROLE_READ, AuthGuard
 
 
 def _request(cookies=None, headers=None):
@@ -60,3 +60,30 @@ class TestAuthGuard:
         assert guard.verify_websocket(_request(cookies={"NACHO_api_key": "secret"})) is True
         assert guard.verify_websocket(_request(headers={"Authorization": "Bearer secret"})) is True
         assert guard.verify_websocket(_request()) is False
+
+
+class TestReadOnlyKey:
+    def test_roles_for_each_key(self):
+        guard = AuthGuard(api_key="admin-key", read_only_api_key="ro-key")
+        assert guard.role_for_token("admin-key") == ROLE_ADMIN
+        assert guard.role_for_token("Bearer ro-key") == ROLE_READ
+        assert guard.role_for_token("wrong") is None
+        assert guard.role_for_token(None) is None
+
+    def test_read_only_key_alone_enables_auth_but_never_admin(self):
+        guard = AuthGuard(read_only_api_key="ro-key")
+        assert guard.enabled is True
+        assert guard.role_for_token("ro-key") == ROLE_READ
+        assert guard.verify_token("ro-key") is False  # not full access
+
+    def test_request_role_prefers_admin_across_credential_sources(self):
+        guard = AuthGuard(api_key="admin-key", read_only_api_key="ro-key")
+        request = _request(
+            cookies={"NACHO_api_key": "ro-key"},
+            headers={"Authorization": "Bearer admin-key"},
+        )
+        assert guard.role_for_request(request) == ROLE_ADMIN
+
+    def test_websocket_accepts_read_only_key(self):
+        guard = AuthGuard(api_key="admin-key", read_only_api_key="ro-key")
+        assert guard.verify_websocket(_request(cookies={"NACHO_api_key": "ro-key"})) is True

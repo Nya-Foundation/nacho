@@ -9,9 +9,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from nacho._version import __version__
 from nacho.config import Nacho
@@ -38,6 +46,9 @@ _UI_INDEX = Path(__file__).parent / "ui" / "index.html"
 # Cap encoded string payloads: parsing is CPU-bound (YAML anchors expand),
 # and no legitimate config approaches this size.
 _MAX_PAYLOAD_BYTES = 1024 * 1024
+# Cap whole request bodies (a raw JSON object bypasses the string cap above).
+# Checked via Content-Length, which every real JSON client sends.
+_MAX_BODY_BYTES = 2 * 1024 * 1024
 
 
 class InvalidConfigDataError(ValueError):
@@ -56,13 +67,18 @@ class NachoOrchestrator:
         data_dir: Optional[Union[str, Path]] = None,
         logger: Optional[logging.Logger] = None,
         history_limit: int = 50,
+        read_only_api_key: Optional[str] = None,
     ) -> None:
         self.read_only = read_only
         # No CORS by default: the bundled UI is same-origin and SDK/CLI
         # clients are not browsers, so cross-origin access is opt-in.
         self.cors_origins = list(cors_origins) if cors_origins is not None else []
         self.logger = logger or LOGGER
-        self.auth = AuthGuard(api_key=api_key) if api_key else None
+        self.auth = (
+            AuthGuard(api_key=api_key, read_only_api_key=read_only_api_key)
+            if (api_key or read_only_api_key)
+            else None
+        )
         self.manager = AppManager(
             data_dir=Path(data_dir) if data_dir else None,
             logger=self.logger,
@@ -103,6 +119,18 @@ class NachoOrchestrator:
         )
 
     def _setup_middleware(self) -> None:
+        @self.app.middleware("http")
+        async def cap_body_size(request: Request, call_next):
+            length = request.headers.get("content-length")
+            if length and length.isdigit() and int(length) > _MAX_BODY_BYTES:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={
+                        "detail": f"Request body exceeds {_MAX_BODY_BYTES // (1024 * 1024)} MiB"
+                    },
+                )
+            return await call_next(request)
+
         if self.cors_origins:
             self.app.add_middleware(
                 CORSMiddleware,
@@ -238,8 +266,11 @@ class NachoOrchestrator:
             return {"message": f"App {app_name!r} deleted"}
 
         @self.app.get("/api/apps/{app_name}/config")
-        def get_config(app_name: str, response: Response) -> Dict[str, Any]:
+        def get_config(app_name: str, request: Request, response: Response) -> Any:
             app = self._get_app(app_name)
+            not_modified = self._not_modified(request, app)
+            if not_modified is not None:
+                return not_modified
             self._set_revision_headers(response, app)
             return app.config.get_all()
 
@@ -299,8 +330,11 @@ class NachoOrchestrator:
             return {"message": "Schema updated", "revision": app.revision, "schema": app.schema}
 
         @self.app.get("/api/apps/{app_name}/config/{path:path}")
-        def get_path(app_name: str, path: str, response: Response) -> Dict[str, Any]:
+        def get_path(app_name: str, path: str, request: Request, response: Response) -> Any:
             app = self._get_app(app_name)
+            not_modified = self._not_modified(request, app)
+            if not_modified is not None:
+                return not_modified
             self._set_revision_headers(response, app)
             # Resolve against the snapshot directly: Nacho.get() deep-copies its
             # result, so an identity-sentinel passed to it would never compare
@@ -544,6 +578,23 @@ class NachoOrchestrator:
         revision = str(app.revision)
         response.headers["ETag"] = f'"{revision}"'
         response.headers["X-Nacho-Revision"] = revision
+
+    def _not_modified(self, request: Request, app: ConfigApp) -> Optional[Response]:
+        """304 response when If-None-Match already names the current revision.
+
+        Lets pollers re-check cheaply: the config body is only sent when the
+        revision actually moved.
+        """
+        header = request.headers.get("if-none-match")
+        if not header:
+            return None
+        tags = {tag.strip() for tag in header.split(",")}
+        tags |= {tag[2:] for tag in tags if tag.startswith("W/")}
+        if "*" not in tags and f'"{app.revision}"' not in tags:
+            return None
+        response = Response(status_code=status.HTTP_304_NOT_MODIFIED)
+        self._set_revision_headers(response, app)
+        return response
 
     def _check_writable(self) -> None:
         if self.read_only:
