@@ -35,5 +35,5 @@ docker-compose.yml
 
 # AI workflow
 .agents
-.cluade
+.claude
 .codex

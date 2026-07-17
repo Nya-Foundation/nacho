@@ -54,16 +54,17 @@ jobs:
       run: uv run pytest --cov=nacho --cov-report=xml
 
     - name: Upload coverage to Codecov
+      # Upload from a single matrix leg to avoid duplicate reports.
+      if: matrix.python-version == '3.13'
       uses: codecov/codecov-action@v5
       with:
         files: ./coverage.xml
-        token: ${{ secrets.CODECOV_TOKEN }} 
-        fail_ci_if_error: true # Recommended to fail the build if Codecov upload fails
-        name: codecov-${{ matrix.python-version }} # Optional: name the report based on Python version
+        token: ${{ secrets.CODECOV_TOKEN }}
+        # Do not fail CI when the upload fails (e.g. fork PRs have no CODECOV_TOKEN).
+        fail_ci_if_error: false
+        name: codecov-${{ matrix.python-version }}
         flags: unittests
         verbose: true
-      # Only upload coverage for one Python version to avoid duplicate reports (optional, but common)
-      # if: matrix.python-version == '3.12' # Or your primary test version
   live-tests:
     name: Integration & E2E (live server)
     runs-on: ubuntu-latest

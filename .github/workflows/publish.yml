@@ -69,8 +69,28 @@ jobs:
     - name: Run integration and e2e suites
       run: uv run pytest -m "integration or e2e" --no-cov
 
+  docker-tests:
+    name: Docker image test suite
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: "0.7.9"
+        python-version: '3.13'
+        enable-cache: true
+
+    - name: Install locked dependencies
+      run: uv sync --frozen --all-extras
+
+    - name: Run docker test suite (builds and exercises the image)
+      run: uv run pytest -m docker --no-cov
+
   publish:
-    needs: test
+    needs: [test, docker-tests]
     runs-on: ubuntu-latest
     environment:
       name: Publish and Release
@@ -184,7 +204,32 @@ jobs:
         username: ${{ github.repository_owner }}
         password: ${{ secrets.GITHUB_TOKEN }}
       
-    # Build and push Docker image
+    # Build a single-arch image locally so it can be scanned BEFORE anything is pushed
+    - name: Build image for vulnerability scan (linux/amd64, not pushed)
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        load: true
+        platforms: linux/amd64
+        tags: nacho-scan:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    # Gate the push on a clean Trivy scan of the locally built image
+    - name: Scan Docker image (Trivy, blocks push on CRITICAL/HIGH)
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: nacho-scan:${{ github.sha }}
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+
+    # Build and push the multi-arch Docker image (only runs if the scan passed)
     - name: Build and push Docker image
       if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
       uses: docker/build-push-action@v5
@@ -207,14 +252,3 @@ jobs:
           org.opencontainers.image.version=${{ steps.get-version.outputs.version }}
           org.opencontainers.image.created=${{ github.event.repository.updated_at }}
           org.opencontainers.image.revision=${{ github.sha }}
-
-    - name: Scan Docker image
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ steps.get-version.outputs.version }}
-        format: 'table'
-        exit-code: '1'
-        ignore-unfixed: true
-        vuln-type: 'os,library'
-        severity: 'CRITICAL,HIGH'
