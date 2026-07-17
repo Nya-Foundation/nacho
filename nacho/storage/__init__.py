@@ -1,4 +1,11 @@
-from .base import StorageBackend, StorageError
+from .base import (
+    AuthError,
+    ConflictError,
+    NotFoundError,
+    RemoteError,
+    StorageBackend,
+    StorageError,
+)
 from .file import FileStorageBackend
 
 try:
@@ -21,6 +28,10 @@ except ImportError:  # pragma: no cover - optional 'remote' extra not installed
 __all__ = [
     "StorageBackend",
     "StorageError",
+    "RemoteError",
+    "AuthError",
+    "NotFoundError",
+    "ConflictError",
     "FileStorageBackend",
     "RemoteStorageBackend",
     "HAS_REMOTE_DEPS",

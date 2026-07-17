@@ -71,9 +71,9 @@ class TestFileStorageBackend:
 
 class TestRemoteStorageBackend:
     def test_auto_connect_can_be_disabled(self):
-        with mock.patch("nacho.storage.remote.requests.get") as get:
+        with mock.patch("nacho.client.requests.request") as request:
             backend = RemoteStorageBackend("http://example.test", auto_connect=False)
 
-        get.assert_not_called()
+        request.assert_not_called()
         assert backend._connected is False
         assert backend._ws_thread is None

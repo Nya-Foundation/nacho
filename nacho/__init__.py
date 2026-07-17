@@ -6,7 +6,11 @@ from .event import EventType
 from .schema import HAS_SCHEMA_DEPS, ValidationError
 from .storage import (
     HAS_REMOTE_DEPS,
+    AuthError,
+    ConflictError,
     FileStorageBackend,
+    NotFoundError,
+    RemoteError,
     RemoteStorageBackend,
     StorageBackend,
     StorageError,
@@ -26,6 +30,10 @@ __all__ = [
     "ValidationError",
     "StorageBackend",
     "StorageError",
+    "RemoteError",
+    "AuthError",
+    "NotFoundError",
+    "ConflictError",
     "FileStorageBackend",
     "RemoteStorageBackend",
     "NachoOrchestrator",
