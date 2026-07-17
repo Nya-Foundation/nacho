@@ -178,3 +178,10 @@ cython_debug/
 config.yaml
 
 .flake8
+
+# AI workflow
+.agents
+.claude
+.codex
+
+.serena

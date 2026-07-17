@@ -31,3 +31,9 @@ tests
 Dockerfile
 docker-compose.yml
 .dockerignore
+
+
+# AI workflow
+.agents
+.cluade
+.codex

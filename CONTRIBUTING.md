@@ -1,180 +1,144 @@
 # Contributing to Nacho
 
-Thank you for your interest in contributing to Nacho! This document outlines the process for contributing to the project and helps ensure a smooth collaboration experience.
+Thank you for considering a contribution. This document describes how the
+project is developed, tested, and released, so your pull request lands
+smoothly.
 
-## Table of Contents
-- [Code of Conduct](#code-of-conduct)
-- [Development Workflow](#development-workflow)
-- [Branch Strategy](#branch-strategy)
-- [Setting Up Development Environment](#setting-up-development-environment)
-- [Code Style and Standards](#code-style-and-standards)
-- [Pull Request Process](#pull-request-process)
-- [Testing](#testing)
-- [Reporting Bugs](#reporting-bugs)
-- [Requesting Features](#requesting-features)
-- [Release Process](#release-process)
+## Code of conduct
 
-## Code of Conduct
+Be respectful and constructive. Assume good intent, consider differing
+viewpoints, and keep discussions focused on what is best for the project.
 
-We expect all contributors to treat each other with respect and maintain a positive, constructive environment. Please be considerate of differing viewpoints and experiences, and focus on what is best for the community and the project.
-
-## Development Workflow
-
-Nacho follows a structured development workflow with three main branches:
+## Branch model
 
 ```
-Feature Branch → dev → staging → main (production)
+feature branch -> dev -> staging -> main
 ```
 
-1. **dev**: Active development branch. All new features and fixes are integrated here first.
-2. **staging**: Pre-production testing branch. Changes from dev are promoted here for integration testing.
-3. **main**: Production branch. Only thoroughly tested code from staging reaches this branch.
+- `dev` — active development. All features and fixes are integrated here first.
+- `staging` — pre-production. Changes are promoted here for integration testing.
+- `main` — production. Merging here triggers an automated release.
 
-This graduated deployment approach ensures stability in production while allowing active development to continue.
+Create feature branches from `dev`, using descriptive names:
 
-## Branch Strategy
+- `feature/<short-description>` for new features
+- `fix/<issue-description>` for bug fixes
+- `docs/<update-description>` for documentation
+- `refactor/<component>` for restructuring
 
-- **Always create feature branches from `dev`**
-- Use descriptive branch names with the following convention:
-  - `feature/short-description` for new features
-  - `fix/issue-description` for bug fixes
-  - `docs/update-description` for documentation changes
-  - `refactor/component-name` for code refactoring
-- Keep branches focused on a single feature or fix
+Keep each branch focused on a single change.
 
-## Setting Up Development Environment
+## Development setup
 
-1. Fork the repository
-2. Clone your fork:
-```bash
-git clone https://github.com/your-username/nacho.git
-cd nacho
-```
-3. Add the upstream repository as a remote:
-```bash
-git remote add upstream https://github.com/Nya-Foundation/nacho.git
-```
-4. Install dependencies with [uv](https://docs.astral.sh/uv/):
-```bash
-uv sync --all-extras
-```
-This creates a virtual environment and installs Nacho with every extra,
-including the development tools. Run project commands inside it with
-`uv run`, e.g. `uv run pytest` or `uv run nacho --help`.
+1. Fork the repository and clone your fork:
 
-<details>
-<summary>Prefer pip? Use a manual virtual environment instead.</summary>
+   ```bash
+   git clone https://github.com/<your-username>/nacho.git
+   cd nacho
+   git remote add upstream https://github.com/Nya-Foundation/nacho.git
+   ```
+
+2. Install with [uv](https://docs.astral.sh/uv/):
+
+   ```bash
+   uv sync --all-extras
+   ```
+
+   This creates a virtual environment with every extra and all development
+   tools. Run project commands through it: `uv run pytest`,
+   `uv run nacho --help`.
+
+   If you prefer pip:
+
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate   # Windows: .venv\Scripts\activate
+   pip install -e .[dev]
+   ```
+
+## Code style
+
+Formatting is enforced by Black and isort (Black-compatible profile). Format
+before pushing:
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -e .[dev]
-```
-</details>
-
-## Code Style and Standards
-
-Nacho uses automated formatting tools to maintain consistent code style:
-
-- **Black**: For Python code formatting
-- **isort**: For import sorting (with Black compatibility profile)
-
-Before submitting your PR, run these tools locally:
-```bash
-isort --profile black .
-black .
+uv run isort --profile black .
+uv run black .
 ```
 
-Our CI pipeline will automatically check and format code when you submit a PR, but it's best to format your code before pushing.
-
-## Pull Request Process
-
-1. Create a branch from `dev` for your changes
-2. Make your changes following our code style guidelines
-3. Add tests for new features or bug fixes
-4. Ensure all tests pass locally
-5. Push your branch to your fork
-6. Open a pull request to the `dev` branch of the main repository
-7. Ensure the PR description clearly describes the changes and their purpose
-8. Ensure the PR passes all CI checks
-9. Address any feedback from reviewers
-
-All pull requests require at least one approval from a maintainer before merging.
+CI checks formatting on every pull request. Beyond formatting, match the
+style of the surrounding code: small focused functions, explicit error
+handling, and comments only where the code cannot speak for itself.
 
 ## Testing
 
-Tests live under `tests/`, grouped by scope into `unit/`, `smoke/`,
-`integration/`, `e2e/`, and `docker/`. Tests are auto-tagged with a pytest
-marker matching the folder they live in.
+Tests live under `tests/`, grouped by scope: `unit/`, `smoke/`,
+`integration/`, `e2e/`, and `docker/`. Each test is automatically tagged with
+a pytest marker matching its folder, so there is no per-file marker
+boilerplate.
 
-The default run executes only the fast suites (`unit` + `smoke`). The heavier
-suites are opt-in:
+The default run executes the fast suites only; the heavier suites are opt-in:
 
 ```bash
-uv run pytest                            # fast suites — run these on every change
-uv run pytest -m integration --no-cov    # spawns a live server
-uv run pytest -m e2e --no-cov            # drives the CLI against a live server
-uv run pytest -m docker --no-cov         # builds and exercises the Docker image
-uv run pytest -m "" --no-cov             # run everything
+uv run pytest                                   # unit + smoke; run on every change
+uv run pytest -m "integration or e2e" --no-cov  # spawns real server processes
+uv run pytest -m docker --no-cov                # builds and exercises the Docker image
+uv run pytest -m "" --no-cov                    # everything
 ```
 
-The default run collects coverage and **fails below 95%**. Pass `--no-cov`
-when running an opt-in suite on its own, since a single marker selection will
-not exercise enough of the codebase to clear that threshold.
+The default run enforces a 95% coverage gate. Pass `--no-cov` when running an
+opt-in suite on its own — a single marker selection does not exercise enough
+of the codebase to clear the threshold.
 
-New code should ship with tests in the folder matching its scope.
+Ship new code with tests in the folder matching its scope. Bug fixes should
+include a test that fails without the fix. Prefer event- or condition-based
+waits over fixed sleeps in anything asynchronous.
 
-Our CI pipeline runs the test suite across all supported Python versions.
+## Pull requests
 
-## Reporting Bugs
+1. Branch from `dev` and make your change.
+2. Add or update tests, and run the fast suites locally.
+3. Open a pull request against `dev` with a description of what changed and
+   why.
+4. Make sure CI passes, and address review feedback.
 
-When reporting bugs, please use the GitHub issue tracker and include:
+Every pull request needs at least one maintainer approval before merging.
 
-1. A clear, descriptive title
-2. Steps to reproduce the issue
-3. Expected behavior
-4. Actual behavior
-5. Environment details (OS, Python version, etc.)
-6. Screenshots or logs if applicable
+## Commit messages
 
-## Requesting Features
+Releases are automated with semantic-release, so commit messages follow
+[Conventional Commits](https://www.conventionalcommits.org/):
 
-Feature requests are welcome! Please include:
+| Prefix | Effect |
+|---|---|
+| `feat:` | minor version bump |
+| `fix:` | patch version bump |
+| `docs:`, `refactor:`, `test:`, `chore:` | no version bump |
 
-1. A clear description of the problem you're trying to solve
-2. The solution you'd like to see
-3. Alternatives you've considered
-4. Any additional context or screenshots
+Note breaking changes with a `BREAKING CHANGE:` footer, which triggers a
+major version bump.
 
-## Release Process
+## Release process
 
-Our release process is fully automated using semantic-release:
+Merges to `main` run the release pipeline automatically:
 
-1. Changes integrated into `dev` are tested by our CI pipeline
-2. When ready, changes are promoted to `staging` for further testing
-3. Finally, changes are merged to `main` for production release
-4. When code reaches `main`, our CI/CD pipeline:
-   - Runs tests and security scans
-   - Calculates the next version based on commit messages
-   - Creates a GitHub release with changelog
-   - Publishes the package to PyPI
-   - Builds and pushes Docker images
+1. The full test suite runs (unit, smoke, integration, and e2e), and the
+   release is blocked if anything fails.
+2. semantic-release calculates the next version from commit messages.
+3. A GitHub release is created with a generated changelog.
+4. The package is published to PyPI.
+5. Multi-architecture Docker images are built, scanned, and pushed to Docker
+   Hub and GHCR.
 
-We follow [Semantic Versioning](https://semver.org/) for version numbers.
+Versioning follows [Semantic Versioning](https://semver.org/).
 
-## Commit Message Format
+## Reporting bugs and requesting features
 
-We use the [Conventional Commits](https://www.conventionalcommits.org/) specification for commit messages, which helps with automated versioning:
+Use the [GitHub issue tracker](https://github.com/Nya-Foundation/nacho/issues).
 
-- `feat: add new feature` (triggers a minor version bump)
-- `fix: resolve bug` (triggers a patch version bump)
-- `docs: update documentation` (no version bump)
-- `refactor: improve code structure` (no version bump)
-- `test: add tests` (no version bump)
-- `chore: update dependencies` (no version bump)
+For bugs, include: a clear title, steps to reproduce, expected and actual
+behavior, environment details (OS, Python version, install extras), and logs
+where applicable.
 
-Breaking changes should be noted with `BREAKING CHANGE:` in the commit message, which will trigger a major version bump.
-
----
-
-Thank you for contributing to Nacho! Your time and expertise help make this project better for everyone.
+For feature requests, include: the problem you are trying to solve, the
+solution you would like, and any alternatives you have considered.
