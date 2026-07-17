@@ -252,6 +252,13 @@ textarea.code {
 
 .content { flex: 1; overflow-y: auto; padding: 20px 24px; min-width: 0; }
 .empty-state { color: var(--muted); text-align: center; margin-top: 80px; }
+.history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.history-table th, .history-table td { text-align: left; padding: 8px 10px;
+  border-bottom: 1px solid var(--border); }
+.history-table th { color: var(--muted); font-weight: 500; }
+.history-view { margin-top: 12px; }
+.code-pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px; font-size: 12px; overflow: auto; max-height: 320px; }
 
 /* App detail */
 .detail-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
@@ -772,6 +779,7 @@ function renderDetail() {
     <div class="tabs">
       <button class="tab" data-tab="config">Configuration</button>
       <button class="tab" data-tab="schema">Schema</button>
+      <button class="tab" data-tab="history">History</button>
     </div>
     <div id="tab-body"></div>
   `;
@@ -792,6 +800,7 @@ function switchTab(tab) {
     t.classList.toggle("active", t.dataset.tab === tab);
   });
   if (tab === "config") renderConfigTab();
+  else if (tab === "history") renderHistoryTab();
   else renderSchemaTab();
 }
 
@@ -891,6 +900,83 @@ async function changeSchemaFormat(fmt) {
   localStorage.setItem("nacho_schema_format", fmt);
   state.schemaPristine = pristineText;
   renderSchemaTab(editorText);
+}
+
+/* ----- History tab ----- */
+async function renderHistoryTab() {
+  $("tab-body").innerHTML = '<div id="history-notice"></div>' +
+    '<div id="history-body" class="hint">Loading history\u2026</div>';
+  let entries;
+  try {
+    const res = await api("GET",
+      "/api/apps/" + encodeURIComponent(state.selected) + "/history");
+    entries = res.data.data || [];
+  } catch (err) {
+    $("history-body").innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
+    return;
+  }
+  if (!entries.length) {
+    $("history-body").innerHTML =
+      '<div class="empty-state" style="margin-top:24px">No history recorded yet.</div>';
+    return;
+  }
+  const rows = entries.map((e) => {
+    const current = e.revision === state.revision;
+    return "<tr>" +
+      "<td>r" + esc(e.revision) + (current ? " (current)" : "") + "</td>" +
+      "<td>" + esc(e.updated_at || "") + "</td>" +
+      "<td>" + esc(e.config_count) + "</td>" +
+      "<td>" + (e.schema ? "yes" : "no") + "</td>" +
+      '<td><button class="btn sm" data-view="' + e.revision + '">View</button> ' +
+      '<button class="btn sm" data-restore="' + e.revision + '"' +
+      (current || state.readOnly ? " disabled" : "") + ">Restore</button></td>" +
+      "</tr>";
+  }).join("");
+  $("history-body").innerHTML =
+    '<table class="history-table"><thead><tr>' +
+    "<th>Revision</th><th>Updated</th><th>Keys</th><th>Schema</th><th></th>" +
+    "</tr></thead><tbody>" + rows + "</tbody></table>" +
+    '<div class="history-view" id="history-view"></div>' +
+    '<p class="hint">Restoring creates a new revision with the snapshot\u2019s ' +
+    "config and schema \u2014 history is never rewritten, so a rollback can " +
+    "itself be rolled back.</p>";
+  $("history-body").querySelectorAll("[data-view]").forEach((b) => {
+    b.onclick = () => viewHistorySnapshot(parseInt(b.dataset.view, 10));
+  });
+  $("history-body").querySelectorAll("[data-restore]").forEach((b) => {
+    b.onclick = () => restoreHistorySnapshot(parseInt(b.dataset.restore, 10));
+  });
+}
+
+async function viewHistorySnapshot(revision) {
+  const view = $("history-view");
+  try {
+    const res = await api("GET", "/api/apps/" +
+      encodeURIComponent(state.selected) + "/history/" + revision);
+    const snap = res.data.data;
+    view.innerHTML = "<h3>Revision " + esc(revision) + "</h3>" +
+      "<pre class=\"code-pre\">" +
+      esc(JSON.stringify({ config: snap.config, schema: snap.schema }, null, 2)) +
+      "</pre>";
+  } catch (err) {
+    view.innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
+  }
+}
+
+async function restoreHistorySnapshot(revision) {
+  if (!confirm("Restore config and schema from revision " + revision +
+      "? This creates a new revision.")) return;
+  try {
+    await api("POST",
+      "/api/apps/" + encodeURIComponent(state.selected) + "/rollback",
+      { revision: revision, expected_revision: state.revision });
+    toast("Rolled back to revision " + revision + ".");
+    await refreshApps();
+    await loadAppDetail(state.selected);
+  } catch (err) {
+    $("history-notice").innerHTML =
+      '<div class="notice error">' + esc(errText(err)) + "</div>";
+  }
 }
 
 /* ----- Dirty tracking ----- */
@@ -1107,6 +1193,7 @@ async function onRemoteUpdate(msg) {
       }
     }
   }
+  if (state.activeTab === "history") renderHistoryTab();
   // The schema is not carried in WS payloads — refresh it when it may be stale.
   if (state.activeTab === "schema" && schemaEd && !isSchemaDirty()) {
     try {

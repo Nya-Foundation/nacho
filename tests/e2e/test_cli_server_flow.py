@@ -103,3 +103,43 @@ def test_cli_auth_flow(make_live_server):
     )
     assert fetched.returncode == 0, fetched.stderr
     assert json.loads(fetched.stdout) == 42
+
+
+def test_cli_history_and_rollback_flow(live_server):
+    """set twice, inspect history, roll back, and read the restored value."""
+    for value in ("one", "two"):
+        result = _run(
+            "set", "release", value,
+            "--remote", live_server, "--app-name", "default",
+        )
+        assert result.returncode == 0, result.stderr
+
+    listed = _run(
+        "history", "list", "--format", "json",
+        "--remote", live_server, "--app-name", "default",
+    )
+    assert listed.returncode == 0, listed.stderr
+    entries = json.loads(listed.stdout)
+    assert len(entries) >= 2
+    target = entries[1]["revision"]  # the "one" snapshot
+
+    shown = _run(
+        "history", "show", str(target), "--format", "json",
+        "--remote", live_server, "--app-name", "default",
+    )
+    assert shown.returncode == 0, shown.stderr
+    assert json.loads(shown.stdout)["config"] == {"release": "one"}
+
+    rolled = _run(
+        "rollback", str(target),
+        "--remote", live_server, "--app-name", "default",
+        "--revision-check", str(entries[0]["revision"]),
+    )
+    assert rolled.returncode == 0, rolled.stderr
+
+    fetched = _run(
+        "get", "release", "--format", "json",
+        "--remote", live_server, "--app-name", "default",
+    )
+    assert fetched.returncode == 0, fetched.stderr
+    assert json.loads(fetched.stdout) == "one"

@@ -95,6 +95,12 @@ def create_parser() -> argparse.ArgumentParser:
     server.add_argument("--api-key", help="API key for authentication")
     server.add_argument("--app-name", help="Application name for config server")
     server.add_argument(
+        "--history-limit",
+        type=int,
+        default=50,
+        help="Revision snapshots to keep per app for rollback (0 disables history)",
+    )
+    server.add_argument(
         "--read-only",
         action="store_true",
         help="Read-only mode",
@@ -212,6 +218,33 @@ def create_parser() -> argparse.ArgumentParser:
         "--revision",
         type=int,
         help="Expected remote app revision for conflict-safe updates",
+    )
+
+    # History command group (remote revision history)
+    history = subparsers.add_parser("history", help="Inspect a remote app's revision history")
+    history_sub = history.add_subparsers(dest="history_command", required=True)
+
+    history_list = history_sub.add_parser("list", help="List stored revisions")
+    _add_remote_args(history_list)
+    history_list.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
+
+    history_show = history_sub.add_parser("show", help="Print one stored revision snapshot")
+    history_show.add_argument("revision", type=int, help="Revision number")
+    _add_remote_args(history_show)
+    history_show.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
+
+    # Rollback command
+    rollback = subparsers.add_parser(
+        "rollback",
+        help="Restore config and schema from a history revision (creates a new revision)",
+    )
+    rollback.add_argument("revision", type=int, help="History revision to restore")
+    _add_remote_args(rollback)
+    rollback.add_argument(
+        "--revision-check",
+        type=int,
+        dest="expected_revision",
+        help="Expected current app revision for conflict-safe rollback",
     )
 
     # Watch command (live updates)
@@ -447,6 +480,7 @@ def cmd_server(args: argparse.Namespace) -> int:
         api_key=args.api_key,
         read_only=args.read_only,
         data_dir=args.data_dir,
+        history_limit=args.history_limit,
         logger=LOGGER,
     )
     orchestrator.run(host=args.host, port=args.port, reload=args.reload)
@@ -681,6 +715,60 @@ def cmd_schema(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_history(args: argparse.Namespace) -> int:
+    """Inspect a remote app's revision history (list / show)."""
+    try:
+        if args.history_command == "list":
+            body = remote_json(
+                "GET", _api_url(args.remote, "apps", args.app_name, "history"), args.api_key
+            )
+            entries = body.get("data", [])
+            if args.format in ("json", "yaml"):
+                print(format_output(entries, args.format))
+            elif not entries:
+                print("No history.")
+            else:
+                for entry in entries:
+                    schema_note = "schema" if entry.get("schema") else "no schema"
+                    print(
+                        f"rev {entry['revision']}  {entry.get('updated_at')}  "
+                        f"{entry.get('config_count', 0)} keys  {schema_note}"
+                    )
+            return 0
+
+        if args.history_command == "show":
+            body = remote_json(
+                "GET",
+                _api_url(args.remote, "apps", args.app_name, "history", str(args.revision)),
+                args.api_key,
+            )
+            print(format_output(body.get("data"), args.format))
+            return 0
+
+        print(f"Unknown history command: {args.history_command}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_rollback(args: argparse.Namespace) -> int:
+    """Restore a remote app's config and schema from a history revision."""
+    try:
+        payload: dict = {"revision": args.revision}
+        if args.expected_revision is not None:
+            payload["expected_revision"] = args.expected_revision
+        body = remote_json(
+            "POST", _api_url(args.remote, "apps", args.app_name, "rollback"),
+            args.api_key, payload,
+        )
+        print(f"{body.get('message')} (now at revision {body.get('revision')})")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     """Stream config updates for an app: current config first, then each change."""
     if not HAS_REMOTE_DEPS:
@@ -736,6 +824,8 @@ def main_cli() -> int:
         "init": cmd_init,
         "apps": cmd_apps,
         "schema": cmd_schema,
+        "history": cmd_history,
+        "rollback": cmd_rollback,
         "watch": cmd_watch,
     }
 

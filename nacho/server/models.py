@@ -147,6 +147,17 @@ class AppMetadataRequest(BaseModel):
         return validate_app_name(value)
 
 
+class RollbackRequest(BaseModel):
+    """Restore config and schema from a history snapshot (as a new revision)."""
+
+    revision: int = Field(..., ge=1, description="History revision to restore")
+    expected_revision: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Expected current app revision for optimistic concurrency",
+    )
+
+
 class PathUpdateRequest(BaseModel):
     """Set a single config path."""
 

@@ -375,7 +375,7 @@ class FakeOrchestrator:
 
 def _server_args(**overrides):
     base = dict(host="127.0.0.1", port=8000, config=None, schema=None, data_dir=None,
-                api_key=None, app_name=None, read_only=False, reload=False)
+                api_key=None, app_name=None, history_limit=50, read_only=False, reload=False)
     base.update(overrides)
     return Namespace(**base)
 
@@ -583,3 +583,49 @@ def test_validate_remote_reports_errors(monkeypatch, tmp_yaml, capsys):
                      app_name="svc", api_key=None)
     assert cmd_validate(args) == 1
     assert "port: bad" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# cmd_history / cmd_rollback
+# ---------------------------------------------------------------------------
+from nacho.cli.main import cmd_history, cmd_rollback  # noqa: E402
+
+
+def test_history_list_human_output(monkeypatch, capsys):
+    _fake_request(monkeypatch, [("/api/apps/svc/history", FakeResponse(200, {"data": [
+        {"revision": 2, "updated_at": "2026-07-17T01:00:00", "config_count": 3, "schema": True},
+        {"revision": 1, "updated_at": "2026-07-17T00:00:00", "config_count": 1, "schema": False},
+    ]}))])
+    args = Namespace(history_command="list", remote="http://s", app_name="svc",
+                     api_key=None, format="raw")
+    assert cmd_history(args) == 0
+    out = capsys.readouterr().out
+    assert "rev 2" in out and "3 keys" in out and "no schema" in out
+
+
+def test_history_show_prints_snapshot(monkeypatch, capsys):
+    _fake_request(monkeypatch, [("/api/apps/svc/history/1", FakeResponse(200, {
+        "data": {"revision": 1, "config": {"x": 1}, "schema": None}}))])
+    args = Namespace(history_command="show", revision=1, remote="http://s",
+                     app_name="svc", api_key=None, format="json")
+    assert cmd_history(args) == 0
+    assert json.loads(capsys.readouterr().out)["config"] == {"x": 1}
+
+
+def test_rollback_posts_revision_and_check(monkeypatch, capsys):
+    calls = _fake_request(monkeypatch, [("/api/apps/svc/rollback", FakeResponse(200, {
+        "message": "Rolled back to revision 1", "revision": 4}))])
+    args = Namespace(revision=1, expected_revision=3, remote="http://s",
+                     app_name="svc", api_key=None)
+    assert cmd_rollback(args) == 0
+    assert calls[0]["json"] == {"revision": 1, "expected_revision": 3}
+    assert "revision 4" in capsys.readouterr().out
+
+
+def test_rollback_conflict_goes_to_stderr(monkeypatch, capsys):
+    _fake_request(monkeypatch, [("/api/apps/svc/rollback", FakeResponse(409, {
+        "detail": {"error": "revision_conflict", "expected": 3, "actual": 4}}))])
+    args = Namespace(revision=1, expected_revision=3, remote="http://s",
+                     app_name="svc", api_key=None)
+    assert cmd_rollback(args) == 1
+    assert "revision_conflict" in capsys.readouterr().err

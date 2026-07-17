@@ -165,3 +165,32 @@ def test_schema_rejects_invalid_write_on_live_server(live_server):
 
     status, body = _http_json("GET", live_server + "/api/apps/svc/config")
     assert status == 200 and body == {"port": 80}
+
+
+def test_rollback_on_live_server_reaches_watcher(live_server):
+    """A rollback is a write like any other: watchers see the restored config."""
+    status, _ = _http_json(
+        "PUT", live_server + "/api/apps/default/config", {"data": {"stage": "v1"}}
+    )
+    assert status == 200
+    status, _ = _http_json(
+        "PUT", live_server + "/api/apps/default/config", {"data": {"stage": "v2"}}
+    )
+    assert status == 200
+
+    backend, recorder = _watching_backend(live_server)
+    try:
+        status, body = _http_json(
+            "GET", live_server + "/api/apps/default/history"
+        )
+        assert status == 200
+        revisions = [e["revision"] for e in body["data"]]
+        target = revisions[-2]  # the {"stage": "v1"} snapshot
+
+        status, body = _http_json(
+            "POST", live_server + "/api/apps/default/rollback", {"revision": target}
+        )
+        assert status == 200
+        recorder.wait_for(lambda p: p.get("stage") == "v1")
+    finally:
+        backend.close()

@@ -752,3 +752,95 @@ def test_orchestrator_mounted_under_subpath_serves_every_route():
         assert client.get("/config/api/apps/svc/config").json() == {"x": 1}
         with client.websocket_connect("/config/ws/svc") as ws:
             assert ws.receive_json()["type"] == "initial_config"
+
+
+# ---------------------------------------------------------------------------
+# History & rollback endpoints
+# ---------------------------------------------------------------------------
+def test_history_endpoints_list_and_fetch_snapshots():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
+    with TestClient(orchestrator.app) as client:
+        client.put("/api/apps/svc/config", json={"data": {"x": 2}})
+
+        listing = client.get("/api/apps/svc/history")
+        assert listing.status_code == 200
+        revisions = [e["revision"] for e in listing.json()["data"]]
+        assert revisions == [2, 1]
+
+        snap = client.get("/api/apps/svc/history/1")
+        assert snap.status_code == 200
+        assert snap.json()["data"]["config"] == {"x": 1}
+
+        assert client.get("/api/apps/svc/history/99").status_code == 404
+        assert client.get("/api/apps/ghost/history").status_code == 404
+
+
+def test_rollback_endpoint_restores_and_bumps_revision():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
+    with TestClient(orchestrator.app) as client:
+        client.put("/api/apps/svc/config", json={"data": {"x": 2}})
+
+        response = client.post("/api/apps/svc/rollback", json={"revision": 1})
+        assert response.status_code == 200
+        assert response.json()["revision"] == 3
+        assert response.json()["data"] == {"x": 1}
+        assert client.get("/api/apps/svc/config").json() == {"x": 1}
+
+
+def test_rollback_endpoint_error_paths():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
+    with TestClient(orchestrator.app) as client:
+        client.put("/api/apps/svc/config", json={"data": {"x": 2}})
+
+        missing = client.post("/api/apps/svc/rollback", json={"revision": 99})
+        assert missing.status_code == 404
+        assert "not in history" in missing.json()["detail"]
+
+        conflict = client.post(
+            "/api/apps/svc/rollback", json={"revision": 1, "expected_revision": 1}
+        )
+        assert conflict.status_code == 409
+
+        assert client.post("/api/apps/ghost/rollback", json={"revision": 1}).status_code == 404
+
+
+def test_rollback_rejected_in_read_only_mode():
+    orchestrator = NachoOrchestrator(
+        apps={"svc": Nacho({"x": 1}, events=True)}, read_only=True
+    )
+    with TestClient(orchestrator.app) as client:
+        assert client.post("/api/apps/svc/rollback", json={"revision": 1}).status_code == 403
+
+
+def test_rollback_broadcasts_to_websocket_watchers():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
+    with TestClient(orchestrator.app) as client:
+        client.put("/api/apps/svc/config", json={"data": {"x": 2}})
+        with client.websocket_connect("/ws/svc") as ws:
+            assert ws.receive_json()["type"] == "initial_config"
+            client.post("/api/apps/svc/rollback", json={"revision": 1})
+            update = ws.receive_json()
+            assert update["type"] == "update"
+            assert update["data"] == {"x": 1}
+
+
+def test_full_app_replace_broadcasts_to_watchers():
+    """PUT /api/apps/{name} now notifies WS clients like config writes do."""
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
+    with TestClient(orchestrator.app) as client:
+        with client.websocket_connect("/ws/svc") as ws:
+            assert ws.receive_json()["type"] == "initial_config"
+            client.put("/api/apps/svc", json={"data": {"x": 9}})
+            update = ws.receive_json()
+            assert update["type"] == "update"
+            assert update["data"] == {"x": 9}
+
+
+def test_history_disabled_with_zero_limit():
+    orchestrator = NachoOrchestrator(
+        apps={"svc": Nacho({"x": 1}, events=True)}, history_limit=0
+    )
+    with TestClient(orchestrator.app) as client:
+        client.put("/api/apps/svc/config", json={"data": {"x": 2}})
+        assert client.get("/api/apps/svc/history").json()["data"] == []
+        assert client.post("/api/apps/svc/rollback", json={"revision": 1}).status_code == 404

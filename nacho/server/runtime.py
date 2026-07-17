@@ -168,6 +168,103 @@ class ConfigApp:
         self.hub.close_all()
 
 
+class HistoryStore:
+    """Ring buffer of per-app revision snapshots.
+
+    Disk-backed when a data directory is configured (one JSON file per
+    revision under ``data_dir/history/{app}/``), in-memory otherwise.
+    A ``limit`` of 0 disables history entirely.
+    """
+
+    def __init__(self, data_dir: Optional[Path], limit: int = 50) -> None:
+        self.limit = limit
+        self.dir = Path(data_dir) / "history" if data_dir else None
+        self._mem: Dict[str, Dict[int, Dict[str, Any]]] = {}
+
+    @property
+    def enabled(self) -> bool:
+        return self.limit > 0
+
+    def _app_dir(self, name: str) -> Path:
+        validate_app_name(name)
+        return self.dir / name  # type: ignore[operator]
+
+    def record(self, snapshot: Dict[str, Any]) -> None:
+        """Store *snapshot* under its revision and prune beyond the limit."""
+        if not self.enabled:
+            return
+        name = snapshot["name"]
+        revision = int(snapshot["revision"])
+        if self.dir is None:
+            revisions = self._mem.setdefault(name, {})
+            revisions[revision] = copy.deepcopy(snapshot)
+            for old in sorted(revisions)[: -self.limit]:
+                del revisions[old]
+            return
+        app_dir = self._app_dir(name)
+        save_file(app_dir / f"{revision:08d}.json", snapshot)
+        files = sorted(app_dir.glob("*.json"))
+        for stale in files[: -self.limit]:
+            stale.unlink(missing_ok=True)
+
+    def list(self, name: str) -> List[Dict[str, Any]]:
+        """Return snapshot metadata, newest first (no config payloads)."""
+        entries = []
+        for snapshot in self._iter_snapshots(name):
+            entries.append(
+                {
+                    "revision": snapshot["revision"],
+                    "updated_at": snapshot.get("updated_at"),
+                    "config_count": len(snapshot.get("config") or {}),
+                    "schema": snapshot.get("schema") is not None,
+                }
+            )
+        return sorted(entries, key=lambda e: e["revision"], reverse=True)
+
+    def get(self, name: str, revision: int) -> Optional[Dict[str, Any]]:
+        if self.dir is None:
+            snapshot = self._mem.get(name, {}).get(revision)
+            return copy.deepcopy(snapshot) if snapshot else None
+        path = self._app_dir(name) / f"{revision:08d}.json"
+        if not path.exists():
+            return None
+        return load_file(path) or None
+
+    def delete(self, name: str) -> None:
+        self._mem.pop(name, None)
+        if self.dir is None:
+            return
+        app_dir = self._app_dir(name)
+        if app_dir.is_dir():
+            for path in app_dir.glob("*.json"):
+                path.unlink(missing_ok=True)
+            try:
+                app_dir.rmdir()
+            except OSError:
+                pass
+
+    def rename(self, old: str, new: str) -> None:
+        if old in self._mem:
+            self._mem[new] = self._mem.pop(old)
+        if self.dir is None:
+            return
+        old_dir = self._app_dir(old)
+        if old_dir.is_dir():
+            old_dir.rename(self._app_dir(new))
+
+    def _iter_snapshots(self, name: str):
+        if self.dir is None:
+            yield from self._mem.get(name, {}).values()
+            return
+        app_dir = self._app_dir(name)
+        if not app_dir.is_dir():
+            return
+        for path in sorted(app_dir.glob("*.json")):
+            data = load_file(path)
+            if data:
+                yield data
+
+
 class AppStore:
     """Simple durable app store backed by one JSON file per app."""
 
@@ -211,9 +308,11 @@ class AppManager:
         *,
         data_dir: Optional[Path] = None,
         logger: Optional[logging.Logger] = None,
+        history_limit: int = 50,
     ) -> None:
         self.logger = logger or logging.getLogger(__name__)
         self.store = AppStore(data_dir)
+        self.history = HistoryStore(data_dir, limit=history_limit)
         self._apps: Dict[str, ConfigApp] = {}
         self._lock = threading.RLock()
 
@@ -268,6 +367,7 @@ class AppManager:
             )
             self._apps[name] = app
             self.store.save(app)
+            self.history.record(app.snapshot())
             return app
 
     def replace(
@@ -292,9 +392,7 @@ class AppManager:
 
             current.description = description
             current.schema = copy.deepcopy(target_schema)
-            if config_changed or metadata_changed:
-                current.touch()
-            self.store.save(current)
+            self.persist(current, changed=config_changed or metadata_changed, notify=True)
             return current
 
     def get(self, name: str) -> Optional[ConfigApp]:
@@ -327,12 +425,12 @@ class AppManager:
                     raise ValueError(f"App {new_name!r} already exists")
                 del self._apps[current_name]
                 self.store.delete(current_name)
+                self.history.rename(current_name, new_name)
                 app.name = new_name
                 app.hub.app_name = new_name
                 self._apps[new_name] = app
 
-            app.touch()
-            self.store.save(app)
+            self.persist(app, changed=True, notify=True)
             return app
 
     def persist(self, app: ConfigApp, *, changed: bool = True, notify: bool = False) -> None:
@@ -341,6 +439,7 @@ class AppManager:
             if changed:
                 app.config.save()
                 app.touch()
+                self.history.record(app.snapshot())
                 should_notify = notify
             self.store.save(app)
         if should_notify:
@@ -410,6 +509,46 @@ class AppManager:
                 self.persist(app, changed=True, notify=True)
             return deleted
 
+    def list_history(self, name: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            self._require_app(name)
+            return self.history.list(name)
+
+    def get_history_snapshot(self, name: str, revision: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            self._require_app(name)
+            return self.history.get(name, revision)
+
+    def rollback(
+        self,
+        name: str,
+        revision: int,
+        *,
+        expected_revision: Optional[int] = None,
+    ) -> ConfigApp:
+        """Restore config and schema from a history snapshot as a NEW revision.
+
+        History is never rewritten: rolling back to revision 41 creates a
+        revision whose content equals snapshot 41, so the counter stays
+        monotonic and the rollback itself is undoable.
+        """
+        with self._lock:
+            app = self._require_app(name)
+            self._check_revision(app, expected_revision)
+            snapshot = self.history.get(name, revision)
+            if snapshot is None:
+                raise LookupError(
+                    f"Revision {revision} of app {name!r} is not in history"
+                )
+            target_config = snapshot.get("config") or {}
+            target_schema = snapshot.get("schema")
+            if target_config == app.config.get_all() and target_schema == app.schema:
+                return app  # already identical — no new revision
+            app.config.replace(target_config, schema=target_schema)
+            app.schema = copy.deepcopy(target_schema)
+            self.persist(app, changed=True, notify=True)
+            return app
+
     def delete(self, name: str) -> bool:
         with self._lock:
             app = self._apps.pop(name, None)
@@ -417,6 +556,7 @@ class AppManager:
                 return False
             app.cleanup()
             self.store.delete(name)
+            self.history.delete(name)
             return True
 
     def cleanup(self) -> None:

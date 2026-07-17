@@ -27,6 +27,7 @@ from .models import (
     ConfigRequest,
     ConvertRequest,
     PathUpdateRequest,
+    RollbackRequest,
     SchemaUpdateRequest,
 )
 from .runtime import AppManager, ConfigApp, RevisionConflictError
@@ -51,6 +52,7 @@ class NachoOrchestrator:
         cors_origins: Optional[List[str]] = None,
         data_dir: Optional[Union[str, Path]] = None,
         logger: Optional[logging.Logger] = None,
+        history_limit: int = 50,
     ) -> None:
         self.read_only = read_only
         self.cors_origins = list(cors_origins) if cors_origins is not None else ["*"]
@@ -59,6 +61,7 @@ class NachoOrchestrator:
         self.manager = AppManager(
             data_dir=Path(data_dir) if data_dir else None,
             logger=self.logger,
+            history_limit=history_limit,
         )
 
         self.manager.load_persisted()
@@ -348,6 +351,51 @@ class NachoOrchestrator:
             except ValidationError as exc:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
             return {"message": f"Configuration path {path!r} deleted", "revision": app.revision}
+
+        @self.app.get("/api/apps/{app_name}/history")
+        async def list_history(app_name: str) -> Dict[str, Any]:
+            try:
+                return {"data": self.manager.list_history(app_name)}
+            except KeyError:
+                raise self._not_found(app_name)
+
+        @self.app.get("/api/apps/{app_name}/history/{revision}")
+        async def get_history_snapshot(app_name: str, revision: int) -> Dict[str, Any]:
+            try:
+                snapshot = self.manager.get_history_snapshot(app_name, revision)
+            except KeyError:
+                raise self._not_found(app_name)
+            if snapshot is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Revision {revision} of app {app_name!r} is not in history",
+                )
+            return {"data": snapshot}
+
+        @self.app.post("/api/apps/{app_name}/rollback")
+        async def rollback(app_name: str, request: RollbackRequest) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                app = self.manager.rollback(
+                    app_name,
+                    request.revision,
+                    expected_revision=request.expected_revision,
+                )
+            except KeyError:
+                raise self._not_found(app_name)
+            except LookupError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+                )
+            except RevisionConflictError as exc:
+                raise self._conflict(exc)
+            except ValidationError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            return {
+                "message": f"Rolled back to revision {request.revision}",
+                "revision": app.revision,
+                "data": app.config.get_all(),
+            }
 
         @self.app.post("/api/apps/{app_name}/validate")
         async def validate_config(app_name: str, request: ConfigRequest) -> Dict[str, Any]:
