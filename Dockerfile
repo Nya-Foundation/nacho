@@ -1,7 +1,7 @@
 # Build stage: resolve locked dependencies with uv, install into /opt/venv.
 FROM python:3.14-alpine AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:0.7.9 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /usr/local/bin/uv
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
