@@ -4,7 +4,8 @@ Single file replacing six tightly-coupled modules.  The design follows three rul
   1. Detect changes as a pure function (no side effects).
   2. Dispatch events through a simple priority queue of handlers.
   3. Async handlers are supported: they are scheduled on the running loop when
-     called from an async context, or run on a shared background loop otherwise.
+     called from an async context, or run to completion on the calling thread
+     otherwise.
 """
 
 from __future__ import annotations
@@ -27,6 +28,10 @@ from .utils.path import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Strong references to in-flight handler tasks — the event loop only keeps
+# weak ones, so without this a task can be garbage-collected mid-flight.
+_background_tasks: Set["asyncio.Task"] = set()
 
 
 def _log_task_result(task: asyncio.Task) -> None:
@@ -196,6 +201,8 @@ class EventHandler:
                 try:
                     loop = asyncio.get_running_loop()
                     task = loop.create_task(coro)
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
                     task.add_done_callback(_log_task_result)
                 except RuntimeError:
                     # No loop in this thread: run the handler to completion here,
@@ -298,39 +305,68 @@ def on_change(
 
 
 class Transaction:
-    """Accumulates mutations in a scratch copy; commits atomically."""
+    """Accumulates mutations in a scratch copy; commits atomically.
+
+    Reads inside the transaction see its own pending writes. At commit the
+    recorded operations are replayed onto the configuration's *current* state
+    under the write lock, so a write that landed while the transaction was
+    open is preserved instead of silently discarded (unless the transaction
+    itself called replace()).
+    """
 
     def __init__(self, config: "Any") -> None:
         self._config = config
         self._data: Dict[str, Any] = copy.deepcopy(config._stored_data)
+        self._ops: List[tuple] = []
 
     def get(self, key: Optional[str] = None, default: Any = None) -> Any:
         if key is None:
-            return self._data
-        return get_nested_value(self._data, key, default)
+            return copy.deepcopy(self._data)
+        return copy.deepcopy(get_nested_value(self._data, key, default))
 
     def set(self, key: str, value: Any) -> None:
+        value = copy.deepcopy(value)
         set_nested_value(self._data, key, value)
+        self._ops.append(("set", key, value))
 
     def delete(self, key: str) -> bool:
         ok, _ = delete_nested_value(self._data, key)
+        self._ops.append(("delete", key, None))
         return ok
 
     def update(self, data: Dict[str, Any]) -> None:
+        data = copy.deepcopy(data)
         self._data = deep_merge(data, self._data)
+        self._ops.append(("update", None, data))
 
     def replace(self, data: Dict[str, Any]) -> None:
-        self._data = copy.deepcopy(data)
+        data = copy.deepcopy(data)
+        self._data = data
+        self._ops.append(("replace", None, data))
 
     def commit(self) -> List[Change]:
-        with self._config._lock:
-            old = copy.deepcopy(self._config._data)
-            candidate_stored = copy.deepcopy(self._data)
-            candidate = self._config._effective_from_stored(candidate_stored)
-            self._config._validate(candidate)
+        config = self._config
+        with config._lock:
+            candidate_stored = copy.deepcopy(config._stored_data)
+            for op, key, value in self._ops:
+                if op == "set":
+                    set_nested_value(candidate_stored, key, copy.deepcopy(value))
+                elif op == "delete":
+                    delete_nested_value(candidate_stored, key)
+                elif op == "update":
+                    candidate_stored = deep_merge(value, candidate_stored)
+                else:  # replace
+                    candidate_stored = copy.deepcopy(value)
+            candidate = config._effective_from_stored(candidate_stored)
+            config._validate(candidate)
+            old = config._data
             changes = detect_changes(old, candidate)
-            self._config._stored_data = candidate_stored
-            self._config._data = candidate
-        if not self._config._events_disabled and changes:
-            self._config._pipeline.dispatch(changes, copy.deepcopy(self._config._data))
+            config._stored_data = candidate_stored
+            config._data = candidate
+            config._emit_lock.acquire()
+        try:
+            if not config._events_disabled and changes:
+                config._pipeline.dispatch(changes, copy.deepcopy(candidate))
+        finally:
+            config._emit_lock.release()
         return changes

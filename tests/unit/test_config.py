@@ -610,3 +610,36 @@ class TestConfigEdgeCases:
         c = Nacho(storage=storage)
         with pytest.raises(StorageError):
             c.load()
+
+
+class TestFreshFileConstruction:
+    def test_fresh_json_file_constructs_and_saves(self, tmp_path):
+        p = tmp_path / "new.json"
+        c = Nacho(str(p))
+        assert c.get_all() == {}
+        c.set("a.b", 1)
+        c.save()
+        assert Nacho(str(p)).get("a.b") == 1
+
+    def test_read_only_instance_does_not_create_the_file(self, tmp_path):
+        p = tmp_path / "ro.yaml"
+        Nacho(str(p), read_only=True)
+        assert not p.exists()
+
+
+class TestTransactionIsolation:
+    def test_interleaved_write_survives_commit(self):
+        c = Nacho({"a": 1})
+        with c.transaction() as txn:
+            txn.set("b", 2)
+            c.set("other", 99)  # lands while the transaction is open
+        assert c.get("b") == 2
+        assert c.get("other") == 99
+
+    def test_transaction_discarded_on_exception(self):
+        c = Nacho({"a": 1})
+        with pytest.raises(RuntimeError):
+            with c.transaction() as txn:
+                txn.set("b", 2)
+                raise RuntimeError("boom")
+        assert c.get("b") is None

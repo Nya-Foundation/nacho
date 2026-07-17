@@ -31,6 +31,11 @@ class TestLoadFile:
         with pytest.raises(ValueError):
             load_file(p)
 
+    def test_empty_json_file_returns_empty(self, tmp_path):
+        p = tmp_path / "empty.json"
+        p.write_text("")
+        assert load_file(p) == {}
+
 
 class TestSaveFile:
     def test_yaml_roundtrip(self, tmp_path):
@@ -77,22 +82,25 @@ class TestSaveFile:
         with pytest.raises(IOError, match="Failed to write"):
             save_file(tmp_path / "out.json", {"x": 1})
 
+    def test_unserializable_yaml_raises_and_leaves_file_intact(self, tmp_path):
+        p = tmp_path / "out.yaml"
+        save_file(p, {"ok": 1})
+        with pytest.raises(ValueError, match="YAML"):
+            save_file(p, {"bad": object()})
+        assert load_file(p) == {"ok": 1}
 
-class TestCreateFileIfNotExists:
-    def test_creates_file_and_parents(self, tmp_path):
-        from nacho.utils.io import create_file_if_not_exists
+    def test_unserializable_json_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="JSON"):
+            save_file(tmp_path / "out.json", {"bad": {1, 2}})
 
-        target = tmp_path / "deep" / "dir" / "touched.yaml"
-        create_file_if_not_exists(target)
-        assert target.exists()
+    def test_save_preserves_existing_permissions(self, tmp_path):
+        import os
 
-    def test_is_noop_when_file_exists(self, tmp_path):
-        from nacho.utils.io import create_file_if_not_exists
-
-        target = tmp_path / "exists.yaml"
-        target.write_text("original")
-        create_file_if_not_exists(target)
-        assert target.read_text() == "original"
+        p = tmp_path / "out.yaml"
+        save_file(p, {"a": 1})
+        os.chmod(p, 0o664)
+        save_file(p, {"a": 2})
+        assert (p.stat().st_mode & 0o777) == 0o664
 
 
 class TestLoadString:

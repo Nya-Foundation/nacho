@@ -1,4 +1,4 @@
-from .io import create_file_if_not_exists, load_file, load_string, save_file
+from .io import load_file, load_string, save_file
 from .path import deep_merge, delete_nested_value, get_nested_value, parse_path, set_nested_value
 
 __all__ = [
@@ -10,5 +10,4 @@ __all__ = [
     "load_file",
     "save_file",
     "load_string",
-    "create_file_if_not_exists",
 ]

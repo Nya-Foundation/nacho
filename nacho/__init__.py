@@ -7,14 +7,10 @@ from .schema import HAS_SCHEMA_DEPS, ValidationError
 from .storage import (
     HAS_REMOTE_DEPS,
     FileStorageBackend,
+    RemoteStorageBackend,
     StorageBackend,
     StorageError,
 )
-
-try:
-    from .storage import RemoteStorageBackend
-except ImportError:  # pragma: no cover - optional 'remote' extra not installed
-    pass
 
 try:
     from .server.app import NachoOrchestrator

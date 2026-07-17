@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - optional 'remote' extra not installed
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "RemoteStorageBackend requires extra dependencies. "
-                "Install with: pip install nacho[remote]"
+                "Install with: pip install nacho-python[remote]"
             )
 
 

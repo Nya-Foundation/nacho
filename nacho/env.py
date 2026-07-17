@@ -1,6 +1,8 @@
 """Environment variable override support.
 
 Maps NACHO_DATABASE_HOST → database.host (or a user-configured prefix/delimiter).
+A doubled delimiter nests while a single one stays part of the key, so
+NACHO_DB__MAX_CONNECTIONS → db.max_connections.
 """
 
 from __future__ import annotations
@@ -21,7 +23,11 @@ FALSY_STRINGS = frozenset({"false", "no", "off"})
 
 
 def _parse_value(raw: str) -> Any:
-    """Best-effort parse of an env var string to a Python type."""
+    """Best-effort parse of an env var string to a Python type.
+
+    Quoting a value ('8080' or "true") is the escape hatch that forces it
+    to stay a string.
+    """
     if not raw:
         return ""
     low = raw.lower()
@@ -32,11 +38,24 @@ def _parse_value(raw: str) -> Any:
         return False
     if low in ("null", "none", "~"):
         return None
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+        return raw[1:-1]
     try:
-        return ast.literal_eval(raw)
-    except (ValueError, SyntaxError):
+        return int(raw)
+    except ValueError:
         pass
-    if raw.startswith(("{", "[")):
+    # Floats only when the text round-trips, so "3.10" stays a version string.
+    try:
+        parsed = float(raw)
+        if str(parsed) == raw:
+            return parsed
+    except ValueError:
+        pass
+    if raw.startswith(("{", "[", "(")):
+        try:
+            return ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            pass
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -77,7 +96,14 @@ class EnvOverrideHandler:
                 continue
             if not self._allowed(key):
                 continue
-            if set_nested_value(result, key, _parse_value(raw)):
+            try:
+                changed = set_nested_value(result, key, _parse_value(raw))
+            except ValueError as exc:
+                # An overlay conflict (e.g. the config holds a scalar where
+                # the env var implies nesting) must not crash the app.
+                logger.warning("Skipping env override %s: %s", name, exc)
+                continue
+            if changed:
                 logger.debug("Env override: %s → %s = %r", name, key, raw)
                 applied += 1
         if applied:
@@ -96,8 +122,18 @@ class EnvOverrideHandler:
 
         if not tail or tail.startswith(self.delimiter) or tail.endswith(self.delimiter):
             return None
-        if self.delimiter * 2 in tail:
-            return None
+
+        double = self.delimiter * 2
+        if double in tail:
+            # Doubled delimiter nests, single stays in the key:
+            # NACHO_DB__MAX_CONNECTIONS → db.max_connections
+            parts = tail.split(double)
+            if any(
+                not p or p.startswith(self.delimiter) or p.endswith(self.delimiter)
+                for p in parts
+            ):
+                return None
+            return ".".join(parts).lower()
 
         return tail.replace(self.delimiter, ".").lower()
 

@@ -25,10 +25,12 @@ class TestFileStorageBackend:
         data = backend.load()
         assert data["server"]["port"] == 8080
 
-    def test_creates_file_if_missing(self, tmp_path):
+    def test_missing_file_loads_empty_and_is_created_on_save(self, tmp_path):
         p = tmp_path / "new.yaml"
+        backend = FileStorageBackend(p)
         assert not p.exists()
-        FileStorageBackend(p)
+        assert backend.load() == {}
+        backend.save({"a": 1})
         assert p.exists()
 
     def test_save_and_load(self, tmp_path):
