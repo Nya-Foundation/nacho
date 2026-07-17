@@ -78,7 +78,12 @@ class RemoteStorageBackend(StorageBackend):
 
     def load(self) -> Dict[str, Any]:
         self._ensure_connected()
-        resp = self._get(self._api_url)
+        resp = self._get(self._api_url, allowed_statuses=(404,))
+        if resp.status_code == 404:
+            raise StorageError(
+                f"Remote app {self.app_name!r} does not exist on {self._base}. "
+                "Create it first (server UI/API) or write to it with save()."
+            )
         data = resp.json()
         if not isinstance(data, dict):
             raise StorageError(f"Remote app {self.app_name!r} returned non-object config")
@@ -137,10 +142,11 @@ class RemoteStorageBackend(StorageBackend):
         self._verify_connection()
         self._connected = True
 
-    def _get(self, url: str) -> requests.Response:
+    def _get(self, url: str, allowed_statuses: tuple = ()) -> requests.Response:
         try:
             resp = requests.get(url, headers=self._headers(), timeout=self._timeout)
-            resp.raise_for_status()
+            if resp.status_code not in allowed_statuses:
+                resp.raise_for_status()
             return resp
         except requests.RequestException as exc:
             raise StorageError(f"GET {url} failed: {exc}") from exc
@@ -168,10 +174,12 @@ class RemoteStorageBackend(StorageBackend):
             raise StorageError(f"POST {url} failed: {exc}") from exc
 
     def _verify_connection(self) -> None:
-        """Confirm the server is reachable and the app exists (or create it).
+        """Confirm the server is reachable.
 
         Raises StorageError on any connectivity problem so failures surface at
-        construction time, not silently later.
+        construction time, not silently later. A missing app is NOT created
+        here — readers get a loud 404 from load(), and save() creates the app
+        on the first write. Connecting must never mutate the server.
         """
         health_url = f"{self._base}/health"
         try:
@@ -179,16 +187,6 @@ class RemoteStorageBackend(StorageBackend):
             resp.raise_for_status()
         except requests.RequestException as exc:
             raise StorageError(f"Cannot reach Nacho server at {self._base}: {exc}") from exc
-
-        # Ensure the target app exists
-        info_url = f"{self._base}/api/apps/{self.app_name}"
-        resp = requests.get(info_url, headers=self._headers(), timeout=self._timeout)
-        if resp.status_code == 404:
-            self._create_app({})
-        elif not resp.ok:
-            raise StorageError(
-                f"App {self.app_name!r} check failed: {resp.status_code} {resp.text}"
-            )
         logger.info("Connected to Nacho server %s (app: %r)", self._base, self.app_name)
 
     def _create_app(self, initial_data: Dict[str, Any]) -> None:

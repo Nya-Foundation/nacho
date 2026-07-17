@@ -266,22 +266,6 @@ class TestDecorators:
 
 
 class TestEventPipelineEdgeCases:
-    def test_emit_with_ignore_flag_dispatches_nothing(self):
-        assert EventPipeline().emit(EventType.UPDATE, ignore=True) == 0
-
-    def test_emit_invokes_matching_handlers(self):
-        pipeline = EventPipeline()
-        seen = []
-        pipeline.register(lambda **k: seen.append(k), EventType.UPDATE)
-        assert pipeline.emit(EventType.UPDATE, path="x", new_value=1) == 1
-        assert seen[0]["path"] == "x"
-
-    def test_register_handler_alias_accepts_event_list(self):
-        pipeline = EventPipeline()
-        handler = pipeline.register_handler(
-            lambda **k: None, [EventType.CREATE, EventType.UPDATE])
-        assert pipeline.unregister(handler) is True
-
     def test_unregister_unknown_handler_returns_false(self):
         from nacho.event import EventHandler
 

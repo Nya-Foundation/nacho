@@ -9,14 +9,15 @@ import ast
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from .utils.path import get_nested_value, set_nested_value
+from .utils.path import set_nested_value
 
 logger = logging.getLogger(__name__)
 
-# System variables to skip when operating prefix-free.
-_SYSTEM_VARS = frozenset({"_", "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "PWD"})
+# Shared truthy/falsy string sets (also used by Nacho.get_bool).
+TRUTHY_STRINGS = frozenset({"true", "yes", "on"})
+FALSY_STRINGS = frozenset({"false", "no", "off"})
 
 
 def _parse_value(raw: str) -> Any:
@@ -25,9 +26,9 @@ def _parse_value(raw: str) -> Any:
         return ""
     low = raw.lower()
     # "1"/"0" deliberately parse as integers below, not booleans.
-    if low in ("true", "yes", "on"):
+    if low in TRUTHY_STRINGS:
         return True
-    if low in ("false", "no", "off"):
+    if low in FALSY_STRINGS:
         return False
     if low in ("null", "none", "~"):
         return None
@@ -52,19 +53,17 @@ class EnvOverrideHandler:
         nested_delimiter: str = "_",
         include_paths: Optional[List[str]] = None,
         exclude_paths: Optional[List[str]] = None,
-        create_missing: bool = True,
     ) -> None:
         self.prefix = prefix.rstrip("_") if prefix else ""
+        if not self.prefix:
+            raise ValueError(
+                "EnvOverrideHandler requires a non-empty prefix — scanning the whole "
+                "environment would collide with system variables."
+            )
         self.delimiter = nested_delimiter
         self.include = list(include_paths or [])
         self.exclude = list(exclude_paths or [])
-        self.create_missing = create_missing
-        self._prefix_with_sep = f"{self.prefix}{self.delimiter}" if self.prefix else ""
-
-        if not self.prefix:
-            logger.warning(
-                "EnvOverrideHandler has no prefix — collisions with system variables are possible."
-            )
+        self._prefix_with_sep = f"{self.prefix}{self.delimiter}"
 
     def apply(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Return *data* with matching env vars overlaid (non-destructive copy)."""
@@ -77,9 +76,6 @@ class EnvOverrideHandler:
             if key is None:
                 continue
             if not self._allowed(key):
-                continue
-            _MISSING = object()
-            if not self.create_missing and get_nested_value(result, key, _MISSING) is _MISSING:
                 continue
             if set_nested_value(result, key, _parse_value(raw)):
                 logger.debug("Env override: %s → %s = %r", name, key, raw)
@@ -94,14 +90,9 @@ class EnvOverrideHandler:
 
     def _to_key(self, name: str) -> Optional[str]:
         """Convert an env var name to a dot-notation config key, or None to skip."""
-        if self.prefix:
-            if not name.startswith(self._prefix_with_sep):
-                return None
-            tail = name[len(self._prefix_with_sep) :]
-        else:
-            if name in _SYSTEM_VARS or name.upper().startswith(("UV_", "PYTEST_", "PYTHON")):
-                return None
-            tail = name
+        if not name.startswith(self._prefix_with_sep):
+            return None
+        tail = name[len(self._prefix_with_sep) :]
 
         if not tail or tail.startswith(self.delimiter) or tail.endswith(self.delimiter):
             return None

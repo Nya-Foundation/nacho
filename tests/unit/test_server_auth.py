@@ -2,7 +2,6 @@
 
 import types
 
-import pytest
 
 from nacho.server.auth import AuthGuard
 
@@ -19,22 +18,16 @@ class TestAuthGuard:
         assert guard.verify_request(_request()) is True
         assert guard.verify_websocket(_request()) is True
 
-    def test_set_api_key_rejects_empty(self):
-        guard = AuthGuard()
-        with pytest.raises(ValueError):
-            guard.set_api_key("")
-
-    def test_set_api_key_enables_the_guard(self):
-        guard = AuthGuard()
-        guard.set_api_key("k")
-        assert guard.enabled is True
-
     def test_verify_token_matches_with_and_without_bearer_prefix(self):
         guard = AuthGuard(api_key="secret")
         assert guard.verify_token("secret") is True
         assert guard.verify_token("Bearer secret") is True
         assert guard.verify_token("wrong") is False
         assert guard.verify_token(None) is False
+
+    def test_verify_token_rejects_non_ascii_without_crashing(self):
+        guard = AuthGuard(api_key="secret")
+        assert guard.verify_token("Bearer ключ") is False
 
     def test_verify_request_accepts_cookie(self):
         guard = AuthGuard(api_key="secret")

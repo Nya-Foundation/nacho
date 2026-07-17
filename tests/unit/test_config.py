@@ -92,7 +92,7 @@ class TestReadAPI:
     def test_get_returns_copy(self, config):
         d = config.get()
         d["injected"] = True
-        assert "injected" not in config.data
+        assert "injected" not in config.get_all()
 
     def test_get_missing_default(self, config):
         assert config.get("nonexistent", "fallback") == "fallback"
@@ -135,15 +135,7 @@ class TestReadAPI:
     def test_get_all_returns_deep_copy(self, config):
         d = config.get_all()
         d["hack"] = True
-        assert "hack" not in config.data
-
-    def test_data_property_is_defensive_and_read_only(self, config):
-        data = config.data
-        data["debug"] = False
-
-        assert config.get("debug") is True
-        with pytest.raises(AttributeError):
-            config.data = {}
+        assert "hack" not in config.get_all()
 
     def test_get_nested_container_returns_copy(self, config):
         db = config.get("db")
@@ -575,11 +567,6 @@ class TestConfigEdgeCases:
 
     def test_check_without_schema_returns_empty(self):
         assert Nacho({"a": 1}).check({"anything": True}) == []
-
-    def test_event_pipeline_and_disabled_properties(self):
-        c = Nacho({"a": 1}, events=True)
-        assert c.event_pipeline is not None
-        assert isinstance(c.event_disabled, bool)
 
     def test_remote_push_replaces_config(self):
         c = Nacho({"a": 1})

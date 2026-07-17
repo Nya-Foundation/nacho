@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from .env import EnvOverrideHandler
+from .env import FALSY_STRINGS, TRUTHY_STRINGS, EnvOverrideHandler
 from .event import (
     Change,
     EventPipeline,
@@ -213,9 +213,10 @@ class Nacho:
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
-            if value.lower() in ("true", "yes", "1", "on"):
+            # "1"/"0" fall through to the int() coercion below.
+            if value.lower() in TRUTHY_STRINGS:
                 return True
-            if value.lower() in ("false", "no", "0", "off"):
+            if value.lower() in FALSY_STRINGS:
                 return False
         try:
             return bool(int(value))
@@ -384,8 +385,6 @@ class Nacho:
                 self._pipeline.dispatch(changes, candidate)
         return copy.deepcopy(candidate)
 
-    reload = load  # alias
-
     def save(self) -> None:
         """Persist current in-memory config to storage.
 
@@ -472,28 +471,6 @@ class Nacho:
         if self._validator is None:
             return []
         return self._validator.check(data)
-
-    # ------------------------------------------------------------------
-    # Backward-compat properties (used by server layer)
-    # ------------------------------------------------------------------
-
-    @property
-    def data(self) -> Dict[str, Any]:
-        """Return a defensive copy of the effective configuration.
-
-        ``data`` is kept as a read-only compatibility property. Mutating the
-        returned dict never changes the live configuration; use ``set()``,
-        ``update()``, ``replace()``, or ``delete()`` for writes.
-        """
-        return self.get_all()
-
-    @property
-    def event_pipeline(self) -> EventPipeline:
-        return self._pipeline
-
-    @property
-    def event_disabled(self) -> bool:
-        return self._events_disabled
 
     # ------------------------------------------------------------------
     # json helper

@@ -2,7 +2,7 @@ from .base import StorageBackend, StorageError
 from .file import FileStorageBackend
 
 try:
-    import requests
+    import requests  # noqa: F401
     import websocket  # noqa: F401
 
     HAS_REMOTE_DEPS = True

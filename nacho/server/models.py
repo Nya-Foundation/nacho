@@ -21,6 +21,13 @@ def validate_app_name(name: str) -> str:
     return name
 
 
+def normalize_format(value: str) -> str:
+    value = value.lower()
+    if value not in SUPPORTED_FORMATS:
+        raise ValueError(f"Format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
+    return value
+
+
 class ConfigRequest(BaseModel):
     """Full configuration payload."""
 
@@ -38,10 +45,7 @@ class ConfigRequest(BaseModel):
     @field_validator("format")
     @classmethod
     def validate_format(cls, value: str) -> str:
-        value = value.lower()
-        if value not in SUPPORTED_FORMATS:
-            raise ValueError(f"Format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
-        return value
+        return normalize_format(value)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -74,11 +78,7 @@ class AppCreateRequest(ConfigRequest):
     @field_validator("schema_format")
     @classmethod
     def validate_schema_format(cls, value: str) -> str:
-        value = value.lower()
-        if value not in SUPPORTED_FORMATS:
-            allowed = ", ".join(sorted(SUPPORTED_FORMATS))
-            raise ValueError(f"Schema format must be one of: {allowed}")
-        return value
+        return normalize_format(value)
 
 
 class ConvertRequest(BaseModel):
@@ -95,10 +95,7 @@ class ConvertRequest(BaseModel):
     @field_validator("from_", "to")
     @classmethod
     def validate_fmt(cls, value: str) -> str:
-        value = value.lower()
-        if value not in SUPPORTED_FORMATS:
-            raise ValueError(f"Format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
-        return value
+        return normalize_format(value)
 
 
 class SchemaUpdateRequest(BaseModel):
@@ -120,10 +117,7 @@ class SchemaUpdateRequest(BaseModel):
     @field_validator("schema_format")
     @classmethod
     def validate_schema_format(cls, value: str) -> str:
-        value = value.lower()
-        if value not in SUPPORTED_FORMATS:
-            raise ValueError(f"Schema format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
-        return value
+        return normalize_format(value)
 
 
 class AppMetadataRequest(BaseModel):

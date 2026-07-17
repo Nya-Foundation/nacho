@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -171,7 +171,6 @@ class NachoOrchestrator:
         async def replace_app(
             app_name: str,
             request: AppCreateRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -183,7 +182,7 @@ class NachoOrchestrator:
                     config_data=config_data,
                     description=request.description,
                     schema=schema,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
             except KeyError:
                 raise self._not_found(app_name)
@@ -197,7 +196,6 @@ class NachoOrchestrator:
         async def update_metadata(
             app_name: str,
             request: AppMetadataRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -205,7 +203,7 @@ class NachoOrchestrator:
                     app_name,
                     new_name=request.name,
                     description=request.description,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
             except KeyError:
                 raise self._not_found(app_name)
@@ -232,7 +230,6 @@ class NachoOrchestrator:
         async def replace_config(
             app_name: str,
             request: ConfigRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -240,7 +237,7 @@ class NachoOrchestrator:
                 app = self.manager.replace_config(
                     app_name,
                     config_data,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
             except KeyError:
                 raise self._not_found(app_name)
@@ -263,7 +260,6 @@ class NachoOrchestrator:
         async def replace_schema(
             app_name: str,
             request: SchemaUpdateRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -271,7 +267,7 @@ class NachoOrchestrator:
                 app = self.manager.update_schema(
                     app_name,
                     schema,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
             except KeyError:
                 raise self._not_found(app_name)
@@ -301,19 +297,17 @@ class NachoOrchestrator:
             app_name: str,
             path: str,
             request: PathUpdateRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
                 value = self._convert_value(request.value, request.type)
-                app = self.manager.get(app_name)
                 self.manager.set_config_path(
                     app_name,
                     path,
                     value,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
-                app = self._get_app(app_name) if app is None else app
+                app = self._get_app(app_name)
             except KeyError:
                 raise self._not_found(app_name)
             except RevisionConflictError as exc:
@@ -332,14 +326,13 @@ class NachoOrchestrator:
             app_name: str,
             path: str,
             revision: Optional[int] = None,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
                 deleted = self.manager.delete_config_path(
                     app_name,
                     path,
-                    expected_revision=self._expected_revision(revision, if_match),
+                    expected_revision=revision,
                 )
                 if not deleted:
                     raise HTTPException(
@@ -460,47 +453,6 @@ class NachoOrchestrator:
                 "actual": exc.actual,
             },
         )
-
-    def _expected_revision(
-        self,
-        body_revision: Optional[int],
-        if_match: Optional[str],
-    ) -> Optional[int]:
-        header_revision = self._parse_if_match(if_match)
-        if (
-            body_revision is not None
-            and header_revision is not None
-            and body_revision != header_revision
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="revision and If-Match refer to different revisions",
-            )
-        return body_revision if body_revision is not None else header_revision
-
-    def _parse_if_match(self, value: Optional[str]) -> Optional[int]:
-        if value is None:
-            return None
-        value = value.strip()
-        if value == "*":
-            return None
-        if value.startswith("W/"):
-            value = value[2:].strip()
-        if len(value) >= 2 and value[0] == value[-1] == '"':
-            value = value[1:-1]
-        try:
-            revision = int(value)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="If-Match must be an integer revision",
-            ) from exc
-        if revision < 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="If-Match revision must be positive",
-            )
-        return revision
 
     def _set_revision_headers(self, response: Response, app: ConfigApp) -> None:
         revision = str(app.revision)

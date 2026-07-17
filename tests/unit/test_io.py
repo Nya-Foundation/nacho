@@ -1,7 +1,6 @@
 """Tests for file I/O utilities."""
 
 import json
-from pathlib import Path
 
 import pytest
 

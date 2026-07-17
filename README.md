@@ -462,7 +462,7 @@ config.replace({"database": {"host": "prod-db", "port": 5432}})
 config.delete("legacy.setting")
 
 # Reload from storage and re-apply env overrides
-config.reload()
+config.load()
 
 # Export current config as a JSON string
 print(config.json())
@@ -522,8 +522,7 @@ nacho server \
   --api-key "secure-key" \
   --app-name "my-service" \
   --data-dir ".nacho/apps" \
-  --event true \
-  --read-only false
+  --read-only
 ```
 
 ### Remote
@@ -613,7 +612,7 @@ docker compose up --build
 
 The image entrypoint is `nacho`, and the default command is
 `server --config config.yaml`. Append any `nacho server` flags
-(`--api-key`, `--read-only`, `--event`, …) to override the defaults. The
+(`--api-key`, `--read-only`, …) to override the defaults. The
 container exposes port `8000` and runs as a non-root user.
 
 ## Current Limits

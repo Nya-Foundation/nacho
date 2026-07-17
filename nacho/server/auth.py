@@ -27,11 +27,6 @@ class AuthGuard:
     def enabled(self) -> bool:
         return bool(self.api_key)
 
-    def set_api_key(self, api_key: str) -> None:
-        if not api_key:
-            raise ValueError("API key cannot be empty")
-        self.api_key = api_key
-
     def verify_token(self, token: Optional[str]) -> bool:
         """Return True when *token* matches the configured API key."""
         if not self.api_key:

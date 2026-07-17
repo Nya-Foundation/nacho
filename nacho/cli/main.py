@@ -39,57 +39,26 @@ def banner() -> str:
 
 
 BUILT_IN_TEMPLATES = {
-    "empty": {
-        "name": "Empty Configuration",
-        "description": "Start with a blank configuration",
-        "icon": "📄",
-        "data": {},
-        "format": "json",
-    },
+    "empty": {},
     "web-app": {
-        "name": "Web Application",
-        "description": "Frontend application with server and API settings",
-        "icon": "🌐",
-        "data": {
-            "app": {"name": "web-app", "version": "1.0.0", "port": 3000},
-            "server": {"host": "localhost", "ssl": False},
-            "api": {"baseUrl": "/api/v1", "timeout": 5000},
-        },
-        "format": "json",
+        "app": {"name": "web-app", "version": "1.0.0", "port": 3000},
+        "server": {"host": "localhost", "ssl": False},
+        "api": {"baseUrl": "/api/v1", "timeout": 5000},
     },
     "api-service": {
-        "name": "API Service",
-        "description": "Backend service with database and auth configuration",
-        "icon": "🔌",
-        "data": {
-            "service": {"name": "api-service", "version": "1.0.0", "port": 8000},
-            "database": {"host": "localhost", "port": 5432, "name": "app_db"},
-            "auth": {"jwt_secret": "your-secret-key", "expires_in": "24h"},
-        },
-        "format": "json",
+        "service": {"name": "api-service", "version": "1.0.0", "port": 8000},
+        "database": {"host": "localhost", "port": 5432, "name": "app_db"},
+        "auth": {"jwt_secret": "your-secret-key", "expires_in": "24h"},
     },
-    # Add more templates as needed
     "microservice": {
-        "name": "Microservice",
-        "description": "Containerized service with logging and metrics",
-        "icon": "🐳",
-        "data": {
-            "service": {"name": "microservice", "version": "1.0.0", "port": 8080},
-            "logging": {"level": "info", "format": "json"},
-            "metrics": {"enabled": True, "endpoint": "/metrics"},
-            "health": {"endpoint": "/health", "timeout": 30},
-        },
-        "format": "json",
+        "service": {"name": "microservice", "version": "1.0.0", "port": 8080},
+        "logging": {"level": "info", "format": "json"},
+        "metrics": {"enabled": True, "endpoint": "/metrics"},
+        "health": {"endpoint": "/health", "timeout": 30},
     },
     "default": {
-        "name": "Default Configuration",
-        "description": "Basic configuration template",
-        "icon": "⚙️",
-        "data": {
-            "app": {"name": "default-app", "version": "1.0.0"},
-            "settings": {"debug": True, "log_level": "info"},
-        },
-        "format": "json",
+        "app": {"name": "default-app", "version": "1.0.0"},
+        "settings": {"debug": True, "log_level": "info"},
     },
 }
 
@@ -135,13 +104,6 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Auto-reload for development",
     )
-
-    # Connect command (connect to a remote server)
-    connect = subparsers.add_parser("connect", help="Connect to a remote configuration server")
-    connect.add_argument("--remote", help="Remote server URL")
-    connect.add_argument("--app-name", default="default", help="Application name for remote server")
-    connect.add_argument("--api-key", help="API key for remote server")
-    connect.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
 
     # Get command
     get = subparsers.add_parser("get", help="Get configuration value")
@@ -206,10 +168,8 @@ def create_parser() -> argparse.ArgumentParser:
     init.add_argument(
         "--template",
         default="default",
-        help=(
-            "Configuration template file to use "
-            "[empty, web-app, api-service, microservice, default]"
-        ),
+        choices=sorted(BUILT_IN_TEMPLATES),
+        help="Built-in template to start from",
     )
 
     return parser
@@ -405,32 +365,6 @@ def cmd_server(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_connect(args: argparse.Namespace) -> int:
-    """
-    Connect to a remote configuration server.
-    """
-
-    if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho-python[remote]")
-        return 1
-
-    if not args.remote:
-        print("Remote URL is required for connection")
-        return 1
-
-    config = create_config(
-        remote_url=args.remote, remote_app_name=args.app_name, api_key=args.api_key
-    )
-
-    try:
-        config_data = config.get_all()
-        print(format_output(config_data, args.format or "json"))
-        return 0
-    except Exception as e:
-        print(f"Error: {e}")
-        return 1
-
-
 def cmd_get(args: argparse.Namespace) -> int:
     """
     Handle get command.
@@ -448,12 +382,7 @@ def cmd_get(args: argparse.Namespace) -> int:
             print(format_output(value, args.format))
             return 0
 
-        config = create_config(
-            args.config,
-            remote_url=args.remote,
-            remote_app_name=args.app_name,
-            api_key=args.api_key,
-        )
+        config = create_config(args.config)
         if args.key:
             value = config.get(args.key)
         else:
@@ -481,13 +410,7 @@ def cmd_set(args: argparse.Namespace) -> int:
                 getattr(args, "revision", None),
             )
 
-        config = create_config(
-            args.config,
-            schema=args.schema,
-            remote_url=args.remote,
-            remote_app_name=args.app_name,
-            api_key=args.api_key,
-        )
+        config = create_config(args.config, schema=args.schema)
         config.set(args.key, parsed_value)
 
         config.save()
@@ -512,13 +435,7 @@ def cmd_delete(args: argparse.Namespace) -> int:
                 getattr(args, "revision", None),
             )
 
-        config = create_config(
-            args.config,
-            schema=args.schema,
-            remote_url=args.remote,
-            remote_app_name=args.app_name,
-            api_key=args.api_key,
-        )
+        config = create_config(args.config, schema=args.schema)
         if config.delete(args.key):
             config.save()
             print(f"Deleted {args.key}")
@@ -571,13 +488,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             print(f"Configuration file already exists: {config_path}")
             return 1
 
-        if args.template not in BUILT_IN_TEMPLATES:
-            print(
-                f"Unknown template '{args.template}'; using 'default'. "
-                f"Available: {', '.join(sorted(BUILT_IN_TEMPLATES))}"
-            )
-        template = BUILT_IN_TEMPLATES.get(args.template, BUILT_IN_TEMPLATES["default"])
-        save_file(config_path, template.get("data", {}))
+        save_file(config_path, BUILT_IN_TEMPLATES[args.template])
         print(f"Created configuration file: {config_path}")
         return 0
     except Exception as e:
@@ -601,7 +512,6 @@ def main_cli() -> int:
     # Command dispatch
     commands = {
         "server": cmd_server,
-        "connect": cmd_connect,
         "get": cmd_get,
         "set": cmd_set,
         "delete": cmd_delete,

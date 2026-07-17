@@ -442,7 +442,7 @@ config.replace({"database": {"host": "prod-db", "port": 5432}})
 config.delete("legacy.setting")
 
 # ストレージから再読み込みし、環境変数オーバーライドを再適用
-config.reload()
+config.load()
 
 # 現在の構成を JSON 文字列としてエクスポート
 print(config.json())
@@ -502,8 +502,7 @@ nacho server \
   --api-key "secure-key" \
   --app-name "my-service" \
   --data-dir ".nacho/apps" \
-  --event true \
-  --read-only false
+  --read-only
 ```
 
 ### リモート
@@ -589,7 +588,7 @@ docker run -p 8000:8000 \
 docker compose up --build
 ```
 
-イメージのエントリポイントは `nacho` で、デフォルトコマンドは `server --config config.yaml` です。任意の `nacho server` フラグ（`--api-key`、`--read-only`、`--event` など）を追加すればデフォルトを上書きできます。コンテナはポート `8000` を公開し、非 root ユーザーで実行されます。
+イメージのエントリポイントは `nacho` で、デフォルトコマンドは `server --config config.yaml` です。任意の `nacho server` フラグ（`--api-key`、`--read-only` など）を追加すればデフォルトを上書きできます。コンテナはポート `8000` を公開し、非 root ユーザーで実行されます。
 
 ## 現在の制限
 

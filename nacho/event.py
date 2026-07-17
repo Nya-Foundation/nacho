@@ -38,54 +38,6 @@ def _log_task_result(task: asyncio.Task) -> None:
         logger.error("Async event handler raised", exc_info=True)
 
 
-class _AsyncEventRunner:
-    """Runs async handlers for synchronous callers on one background loop."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
-        self._ready: Optional[threading.Event] = None
-
-    def run(self, coro: Any) -> None:
-        loop = self._ensure_loop()
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        future.result()
-
-    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
-        with self._lock:
-            if self._loop is not None and self._loop.is_running():
-                return self._loop
-
-            if self._ready is not None and self._thread is not None and self._thread.is_alive():
-                ready = self._ready
-            else:
-                ready = threading.Event()
-                self._ready = ready
-
-                def run_loop() -> None:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    with self._lock:
-                        self._loop = loop
-                    ready.set()
-                    loop.run_forever()
-
-                self._thread = threading.Thread(
-                    target=run_loop,
-                    name="nacho-events",
-                    daemon=True,
-                )
-                self._thread.start()
-
-        ready.wait()
-        with self._lock:
-            return self._loop  # type: ignore[return-value]
-
-
-_async_runner = _AsyncEventRunner()
-
-
 # ---------------------------------------------------------------------------
 # Event types
 # ---------------------------------------------------------------------------
@@ -246,7 +198,9 @@ class EventHandler:
                     task = loop.create_task(coro)
                     task.add_done_callback(_log_task_result)
                 except RuntimeError:
-                    _async_runner.run(coro)
+                    # No loop in this thread: run the handler to completion here,
+                    # matching the blocking semantics sync handlers already have.
+                    asyncio.run(coro)
             else:
                 self.callback(**kwargs)
         except Exception:
@@ -294,16 +248,6 @@ class EventPipeline:
         )
         return handler
 
-    # Kept for backward compat with server code that calls register_handler
-    def register_handler(
-        self,
-        callback: Callable,
-        event_types: Union[EventType, List[EventType]],
-        path_pattern: Optional[str] = None,
-        priority: int = 100,
-    ) -> EventHandler:
-        return self.register(callback, event_types, path_pattern, priority)
-
     def unregister(self, handler: EventHandler) -> bool:
         with self._lock:
             try:
@@ -320,28 +264,6 @@ class EventPipeline:
             for handler in handlers:
                 if handler.matches(change):
                     handler.invoke(change, config_data)
-
-    # Kept for backward compat with server code that calls pipeline.emit()
-    def emit(
-        self,
-        event_type: EventType,
-        path: Optional[str] = None,
-        old_value: Any = None,
-        new_value: Any = None,
-        config_data: Optional[Dict[str, Any]] = None,
-        ignore: bool = False,
-    ) -> int:
-        if ignore:
-            return 0
-        change = Change(event_type, path, old_value, new_value)
-        count = 0
-        with self._lock:
-            handlers = list(self._handlers)
-        for handler in handlers:
-            if handler.matches(change):
-                handler.invoke(change, config_data or {})
-                count += 1
-        return count
 
 
 # ---------------------------------------------------------------------------

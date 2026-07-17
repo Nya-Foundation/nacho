@@ -90,19 +90,32 @@ def test_construct_raises_when_unreachable(http):
         RemoteStorageBackend("http://srv")
 
 
-def test_construct_raises_on_app_check_error(http):
+def test_connect_does_not_create_missing_app(http):
+    """Connecting is read-only: no POST happens even when the app is absent."""
     http["get"].append(("/health", FakeResponse(200, {})))
-    http["get"].append(("/api/apps/default", FakeResponse(500, {}, text="boom")))
-    with pytest.raises(StorageError, match="check failed"):
-        RemoteStorageBackend("http://srv")
+    posted = []
+    http["post"].append(("/api/apps", FakeResponse(201, {})))
+    backend = RemoteStorageBackend("http://srv")
+    assert backend._connected
+    assert posted == []
+
+
+def test_load_missing_app_raises_helpful_error(http):
+    http["get"].append(("/health", FakeResponse(200, {})))
+    http["get"].append(("/api/apps/default/config", FakeResponse(404, {})))
+    backend = RemoteStorageBackend("http://srv")
+    with pytest.raises(StorageError, match="does not exist"):
+        backend.load()
 
 
 def test_create_app_failure_raises(http):
+    """save() on a missing app auto-creates it; a failed create surfaces loudly."""
     http["get"].append(("/health", FakeResponse(200, {})))
-    http["get"].append(("/api/apps/default", FakeResponse(404, {})))
+    http["put"].append(("/api/apps/default/config", FakeResponse(404, {})))
     http["post"].append(("/api/apps", FakeResponse(500, {}, text="nope")))
+    backend = RemoteStorageBackend("http://srv")
     with pytest.raises(StorageError, match="Failed to create app"):
-        RemoteStorageBackend("http://srv")
+        backend.save({"x": 1})
 
 
 # ---------------------------------------------------------------------------
@@ -289,12 +302,13 @@ def test_close_shuts_down_an_active_socket(backend, monkeypatch):
 
 
 def test_post_wraps_transport_error(http):
-    # app missing -> _verify_connection calls _create_app -> _post, which fails.
+    # save() on a missing app calls _create_app -> _post, which fails.
     http["get"].append(("/health", FakeResponse(200, {})))
-    http["get"].append(("/api/apps/default", FakeResponse(404, {})))
+    http["put"].append(("/api/apps/default/config", FakeResponse(404, {})))
     http["post"].append(("/api/apps", requests.ConnectionError("refused")))
+    backend = RemoteStorageBackend("http://srv")
     with pytest.raises(StorageError, match="POST .* failed"):
-        RemoteStorageBackend("http://srv")
+        backend.save({"x": 1})
 
 
 def test_close_joins_a_live_watcher_thread(backend, monkeypatch):

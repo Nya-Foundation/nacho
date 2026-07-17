@@ -437,7 +437,7 @@ config.replace({"database": {"host": "prod-db", "port": 5432}})
 config.delete("legacy.setting")
 
 # 从存储重新加载并重新应用环境变量覆盖
-config.reload()
+config.load()
 
 # 将当前配置导出为 JSON 字符串
 print(config.json())
@@ -497,8 +497,7 @@ nacho server \
   --api-key "secure-key" \
   --app-name "my-service" \
   --data-dir ".nacho/apps" \
-  --event true \
-  --read-only false
+  --read-only
 ```
 
 ### 远程
@@ -584,7 +583,7 @@ docker run -p 8000:8000 \
 docker compose up --build
 ```
 
-镜像的入口点是 `nacho`，默认命令是 `server --config config.yaml`。追加任意 `nacho server` 标志（`--api-key`、`--read-only`、`--event` 等）即可覆盖默认值。容器暴露端口 `8000`，并以非 root 用户运行。
+镜像的入口点是 `nacho`，默认命令是 `server --config config.yaml`。追加任意 `nacho server` 标志（`--api-key`、`--read-only` 等）即可覆盖默认值。容器暴露端口 `8000`，并以非 root 用户运行。
 
 ## 当前限制
 

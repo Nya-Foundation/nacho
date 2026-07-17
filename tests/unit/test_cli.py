@@ -8,12 +8,12 @@ so the suite needs no network or running server.
 import json
 from argparse import Namespace
 
+import pytest
 import yaml
 
 from nacho.cli import main as cli
 from nacho.cli.main import (
     banner,
-    cmd_connect,
     cmd_delete,
     cmd_get,
     cmd_init,
@@ -255,17 +255,6 @@ def test_cmd_delete_local_handles_exception(monkeypatch, capsys):
     assert "Error: backend down" in capsys.readouterr().out
 
 
-def test_cmd_connect_handles_exception(monkeypatch, capsys):
-    class FakeConfig:
-        def get_all(self):
-            raise RuntimeError("unreachable")
-
-    monkeypatch.setattr(cli, "create_config", lambda **k: FakeConfig())
-    args = Namespace(remote="http://s", app_name="svc", api_key=None, format="json")
-    assert cmd_connect(args) == 1
-    assert "Error: unreachable" in capsys.readouterr().out
-
-
 def test_cmd_delete_remote_success(monkeypatch, capsys):
     import requests
 
@@ -347,10 +336,10 @@ def test_cmd_init_refuses_existing_file(tmp_yaml, capsys):
     assert "already exists" in capsys.readouterr().out
 
 
-def test_cmd_init_warns_on_unknown_template(tmp_path, capsys):
-    target = tmp_path / "x.yaml"
-    assert cmd_init(Namespace(config=str(target), template="bogus")) == 0
-    assert "Unknown template" in capsys.readouterr().out
+def test_init_rejects_unknown_template_at_parse_time(tmp_path):
+    parser = create_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["init", str(tmp_path / "x.yaml"), "--template", "bogus"])
 
 
 def test_cmd_init_handles_write_error(tmp_path, monkeypatch, capsys):
@@ -360,30 +349,6 @@ def test_cmd_init_handles_write_error(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "save_file", boom)
     assert cmd_init(Namespace(config=str(tmp_path / "y.yaml"), template="default")) == 1
     assert "Error:" in capsys.readouterr().out
-
-
-# ---------------------------------------------------------------------------
-# cmd_connect
-# ---------------------------------------------------------------------------
-def test_cmd_connect_requires_remote_url(capsys):
-    args = Namespace(remote=None, app_name="default", api_key=None, format="json")
-    assert cmd_connect(args) == 1
-    assert "Remote URL is required" in capsys.readouterr().out
-
-
-def test_cmd_connect_dumps_remote_config(monkeypatch, capsys):
-    monkeypatch.setattr("nacho.storage.remote.RemoteStorageBackend",
-                        lambda url, app_name, api_key: {"team": "platform"})
-    args = Namespace(remote="http://s", app_name="svc", api_key=None, format="json")
-    assert cmd_connect(args) == 0
-    assert "platform" in capsys.readouterr().out
-
-
-def test_cmd_connect_without_remote_deps(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "HAS_REMOTE_DEPS", False)
-    args = Namespace(remote="http://s", app_name="svc", api_key=None, format="json")
-    assert cmd_connect(args) == 1
-    assert "Remote connection requires" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

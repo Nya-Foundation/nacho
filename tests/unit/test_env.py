@@ -1,6 +1,5 @@
 """Tests for environment variable override support."""
 
-import os
 
 import pytest
 
@@ -56,18 +55,15 @@ class TestEnvOverrideHandler:
         assert data["db"]["host"] == "new"
         assert data["other"] == "original"
 
-    def test_no_prefix_with_existing_key(self, monkeypatch):
-        # Without a prefix, common system vars are skipped
-        handler = EnvOverrideHandler(prefix="")
-        data = handler.apply({"PATH": "original"})
-        # PATH is in _SYSTEM_VARS so should be skipped
-        assert data["PATH"] == "original"
+    def test_empty_prefix_is_rejected(self):
+        with pytest.raises(ValueError, match="prefix"):
+            EnvOverrideHandler(prefix="")
 
-    def test_key_not_in_create_missing_false(self, monkeypatch):
-        monkeypatch.setenv("APP_NEW_KEY", "value")
-        handler = EnvOverrideHandler(prefix="APP", create_missing=False)
-        data = handler.apply({"existing": "x"})
-        assert "new" not in data
+    def test_numeric_strings_stay_numeric(self, monkeypatch):
+        monkeypatch.setenv("APP_PORT", "1")
+        handler = EnvOverrideHandler(prefix="APP")
+        data = handler.apply({"port": 8080})
+        assert data["port"] == 1 and not isinstance(data["port"], bool)
 
     def test_integration_with_nacho(self, monkeypatch):
         monkeypatch.setenv("NACHO_DATABASE_PORT", "9999")

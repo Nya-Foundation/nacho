@@ -13,7 +13,6 @@ import pytest
 
 def test_package_imports():
     """The top-level package and its version import cleanly."""
-    import nacho
     from nacho._version import __version__
 
     assert isinstance(__version__, str) and __version__

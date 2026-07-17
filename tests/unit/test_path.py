@@ -1,6 +1,5 @@
 """Tests for path utilities."""
 
-import pytest
 
 from nacho.utils.path import (
     deep_merge,
@@ -120,7 +119,7 @@ class TestDeepMerge:
     def test_does_not_mutate_inputs(self):
         src = {"a": 1}
         dst = {"b": 2}
-        result = deep_merge(src, dst)
+        assert deep_merge(src, dst) == {"a": 1, "b": 2}
         assert "a" not in dst
         assert "b" not in src
 

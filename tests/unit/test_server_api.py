@@ -264,19 +264,11 @@ def test_write_with_stale_revision_returns_conflict():
         assert response.headers["etag"] == '"1"'
         assert response.headers["x-nacho-revision"] == "1"
 
-        response = client.put(
-            "/api/apps/svc/config/x",
-            json={"value": 2},
-            headers={"If-Match": '"1"'},
-        )
+        response = client.put("/api/apps/svc/config/x", json={"value": 2, "revision": 1})
         assert response.status_code == 200
         assert response.json()["revision"] == 2
 
-        response = client.put(
-            "/api/apps/svc/config/x",
-            json={"value": 3},
-            headers={"If-Match": '"1"'},
-        )
+        response = client.put("/api/apps/svc/config/x", json={"value": 3, "revision": 1})
         assert response.status_code == 409
         assert response.json()["detail"]["actual"] == 2
         assert client.get("/api/apps/svc/config").json() == {"x": 2}
@@ -702,47 +694,6 @@ def test_replace_schema_missing_app_404():
         ).status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# If-Match header parsing
-# ---------------------------------------------------------------------------
-def test_if_match_accepts_weak_and_quoted_etags():
-    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
-    with TestClient(orchestrator.app) as client:
-        response = client.put(
-            "/api/apps/svc/config/x", json={"value": 2}, headers={"If-Match": 'W/"1"'}
-        )
-        assert response.status_code == 200
-
-
-def test_if_match_rejects_non_integer():
-    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
-    with TestClient(orchestrator.app) as client:
-        response = client.put(
-            "/api/apps/svc/config/x", json={"value": 2}, headers={"If-Match": '"abc"'}
-        )
-        assert response.status_code == 400
-
-
-def test_if_match_rejects_non_positive_revision():
-    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
-    with TestClient(orchestrator.app) as client:
-        response = client.put(
-            "/api/apps/svc/config/x", json={"value": 2}, headers={"If-Match": '"0"'}
-        )
-        assert response.status_code == 400
-
-
-def test_conflicting_revision_and_if_match_rejected():
-    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
-    with TestClient(orchestrator.app) as client:
-        response = client.put(
-            "/api/apps/svc/config/x",
-            json={"value": 2, "revision": 2},
-            headers={"If-Match": '"1"'},
-        )
-        assert response.status_code == 400
-
-
 def test_set_path_bool_rejects_unrecognized_string():
     orchestrator = NachoOrchestrator(apps={"svc": Nacho({}, events=True)})
     with TestClient(orchestrator.app) as client:
@@ -750,15 +701,6 @@ def test_set_path_bool_rejects_unrecognized_string():
             "/api/apps/svc/config/flag", json={"value": "maybe", "type": "bool"}
         )
         assert response.status_code == 400
-
-
-def test_if_match_star_is_treated_as_no_precondition():
-    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
-    with TestClient(orchestrator.app) as client:
-        response = client.put(
-            "/api/apps/svc/config/x", json={"value": 2}, headers={"If-Match": "*"}
-        )
-        assert response.status_code == 200
 
 
 def test_replace_config_rejects_schema_violation():
@@ -774,7 +716,7 @@ def test_replace_config_rejects_schema_violation():
 def test_delete_path_revision_conflict():
     orchestrator = NachoOrchestrator(apps={"svc": Nacho({"a": 1, "b": 2}, events=True)})
     with TestClient(orchestrator.app) as client:
-        response = client.delete("/api/apps/svc/config/a", headers={"If-Match": '"99"'})
+        response = client.delete("/api/apps/svc/config/a", params={"revision": 99})
         assert response.status_code == 409
 
 
