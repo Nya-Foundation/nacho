@@ -124,8 +124,25 @@ def test_websocket_auth_rejects_query_string_api_key():
             assert websocket.receive_json()["type"] == "initial_config"
 
 
-def test_default_cors_does_not_allow_credentials_with_wildcard_origin():
+def test_no_cors_by_default():
+    """Cross-origin access is opt-in: a drive-by web page must not be able
+    to read or write config on a default server."""
     orchestrator = NachoOrchestrator()
+
+    with TestClient(orchestrator.app) as client:
+        response = client.options(
+            "/api/apps",
+            headers={
+                "Origin": "https://example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_wildcard_cors_does_not_allow_credentials():
+    orchestrator = NachoOrchestrator(cors_origins=["*"])
 
     with TestClient(orchestrator.app) as client:
         response = client.options(
@@ -844,3 +861,123 @@ def test_history_disabled_with_zero_limit():
         client.put("/api/apps/svc/config", json={"data": {"x": 2}})
         assert client.get("/api/apps/svc/history").json()["data"] == []
         assert client.post("/api/apps/svc/rollback", json={"revision": 1}).status_code == 404
+
+
+def test_set_path_through_scalar_returns_400_not_silent_success():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"a": 1})})
+
+    with TestClient(orchestrator.app) as client:
+        before = client.get("/api/apps/svc").json()["data"]["revision"]
+        response = client.put("/api/apps/svc/config/a.b", json={"value": 2})
+        assert response.status_code == 400
+        assert "a.b" in response.json()["detail"]
+        after = client.get("/api/apps/svc").json()["data"]
+        assert after["revision"] == before  # nothing changed, no bump
+        assert client.get("/api/apps/svc/config").json() == {"a": 1}
+
+
+def test_set_path_with_identical_value_does_not_bump_revision():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"a": 1})})
+
+    with TestClient(orchestrator.app) as client:
+        before = client.get("/api/apps/svc").json()["data"]["revision"]
+        response = client.put("/api/apps/svc/config/a", json={"value": 1})
+        assert response.status_code == 200
+        assert response.json()["changed"] is False
+        after = client.get("/api/apps/svc").json()["data"]["revision"]
+        assert after == before
+
+
+def test_identical_full_put_does_not_bump_revision_or_flush_history():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"a": 1})})
+
+    with TestClient(orchestrator.app) as client:
+        payload = {"data": {"a": 1}}
+        first = client.put("/api/apps/svc", json=payload)
+        assert first.status_code == 200
+        rev = first.json()["app"]["revision"]
+        history_len = len(client.get("/api/apps/svc/history").json()["data"])
+
+        for _ in range(3):  # a reconciliation loop re-PUTting the same config
+            response = client.put("/api/apps/svc", json=payload)
+            assert response.status_code == 200
+            assert response.json()["app"]["revision"] == rev
+        assert len(client.get("/api/apps/svc/history").json()["data"]) == history_len
+
+
+def test_identical_schema_put_does_not_bump_revision():
+    schema = {"type": "object"}
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"a": 1}, schema=schema)})
+
+    with TestClient(orchestrator.app) as client:
+        orchestrator.manager.get("svc").schema = schema
+        before = client.get("/api/apps/svc").json()["data"]["revision"]
+        response = client.put("/api/apps/svc/schema", json={"schema": schema})
+        assert response.status_code == 200
+        assert response.json()["revision"] == before
+
+
+def test_noop_metadata_patch_does_not_bump_revision():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"a": 1})})
+
+    with TestClient(orchestrator.app) as client:
+        before = client.get("/api/apps/svc").json()["data"]["revision"]
+        response = client.patch("/api/apps/svc/metadata", json={})
+        assert response.status_code == 200
+        assert response.json()["app"]["revision"] == before
+
+
+def test_corrupt_persisted_app_is_skipped_at_boot(tmp_path):
+    NachoOrchestrator(
+        apps={"good": Nacho({"a": 1})},
+        data_dir=tmp_path,
+    )
+    (tmp_path / "bad.json").write_text("{ this is not json")
+
+    reborn = NachoOrchestrator(data_dir=tmp_path)
+    assert "good" in reborn.manager.apps
+    assert "bad" not in reborn.manager.apps
+
+
+def test_schema_invalid_persisted_app_is_skipped_at_boot(tmp_path):
+    NachoOrchestrator(apps={"good": Nacho({"a": 1})}, data_dir=tmp_path)
+    (tmp_path / "broken.json").write_text(
+        json.dumps(
+            {
+                "name": "broken",
+                "revision": 3,
+                "config": {"port": "not-an-int"},
+                "schema": {
+                    "type": "object",
+                    "properties": {"port": {"type": "integer"}},
+                },
+            }
+        )
+    )
+
+    reborn = NachoOrchestrator(data_dir=tmp_path)
+    assert "good" in reborn.manager.apps
+    assert "broken" not in reborn.manager.apps
+
+
+def test_auth_error_uses_detail_envelope():
+    orchestrator = NachoOrchestrator(api_key="secret")
+
+    with TestClient(orchestrator.app) as client:
+        response = client.get("/api/apps")
+        assert response.status_code == 401
+        assert "detail" in response.json()
+
+        assert client.get("/").status_code == 200  # root stays public
+
+
+def test_oversized_encoded_payload_is_rejected():
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({})})
+
+    with TestClient(orchestrator.app) as client:
+        response = client.post(
+            "/api/convert",
+            json={"data": "a: " + "x" * (1024 * 1024 + 1), "from": "yaml", "to": "json"},
+        )
+        assert response.status_code == 400
+        assert "MiB" in response.json()["detail"]

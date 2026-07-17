@@ -16,7 +16,7 @@ _AUTH_PREFIX = "Bearer "
 _SESSION_COOKIE = "NACHO_api_key"
 # /docs, /redoc, and /openapi.json stay public: GET / advertises the docs and
 # the API surface is not a secret — only the data behind it is.
-_DEFAULT_PUBLIC_PATHS = ("/health", "/favicon.ico", "/ui", "/docs", "/redoc", "/openapi.json")
+_DEFAULT_PUBLIC_PATHS = ("/", "/health", "/favicon.ico", "/ui", "/docs", "/redoc", "/openapi.json")
 
 
 class AuthGuard:
@@ -84,11 +84,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         self.logger.debug("Rejected unauthenticated request to %s", request.url.path)
+        # Same {"detail": ...} envelope FastAPI uses for HTTPException, so
+        # clients only ever parse one error shape.
         return JSONResponse(
             status_code=401,
-            content={"error": "Unauthorized: invalid API key"},
+            content={"detail": "Unauthorized: invalid API key"},
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     def _is_public(self, path: str) -> bool:
-        return any(path == public or path.startswith(f"{public}/") for public in self.public_paths)
+        return any(
+            path == public or (public != "/" and path.startswith(f"{public}/"))
+            for public in self.public_paths
+        )

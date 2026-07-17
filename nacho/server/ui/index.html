@@ -475,11 +475,16 @@ async function serializeSafe(obj, fmt, label) {
 /* ===================================================================== */
 /* Cookie (needed so the WebSocket handshake can authenticate)             */
 /* ===================================================================== */
+/* The server (auth.py) compares the raw cookie value against the API key and
+   never URL-decodes it, so the value must be written unencoded here. `Secure`
+   is added when served over HTTPS. */
 function setAuthCookie(key) {
-  document.cookie = "NACHO_api_key=" + key + "; path=" + COOKIE_PATH + "; SameSite=Strict";
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = "NACHO_api_key=" + key + "; path=" + COOKIE_PATH + "; SameSite=Strict" + secure;
 }
 function clearAuthCookie() {
-  document.cookie = "NACHO_api_key=; path=" + COOKIE_PATH + "; Max-Age=0; SameSite=Strict";
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = "NACHO_api_key=; path=" + COOKIE_PATH + "; Max-Age=0; SameSite=Strict" + secure;
 }
 
 /* ===================================================================== */
@@ -692,8 +697,14 @@ async function enterApp() {
 async function refreshApps() {
   const { data } = await api("GET", "/api/apps");
   state.apps = data.data || {};
+  if (state.selected && !state.apps[state.selected]) {
+    // The selected app was deleted or renamed elsewhere — drop the stale pane.
+    state.selected = null;
+    closeWs();
+    $("content").innerHTML =
+      '<div class="empty-state">Select an app, or create one to get started.</div>';
+  }
   renderAppList();
-  if (state.selected && !state.apps[state.selected]) state.selected = null;
 }
 
 function renderAppList() {
@@ -788,10 +799,14 @@ function renderDetail() {
   c.querySelectorAll(".tab").forEach((t) => {
     t.onclick = () => switchTab(t.dataset.tab);
   });
-  switchTab(state.activeTab);
+  switchTab(state.activeTab, true);
 }
 
-function switchTab(tab) {
+function switchTab(tab, force) {
+  // Re-clicking the already-active tab must not re-render from pristine —
+  // that would silently discard unsaved edits. `force` is used after a full
+  // detail re-render, when the tab body is empty and must be rebuilt.
+  if (!force && tab === state.activeTab) return;
   if (tab !== state.activeTab && !confirmDiscard()) return;
   state.activeTab = tab;
   configEd = null;
@@ -1143,14 +1158,26 @@ function openWs(name, attempt) {
   );
   state.ws = ws;
   ws.onopen = () => { setLive(true); attempt = 0; };
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     setLive(false);
+    if (state.selected !== name) return;
+    if (ev.code === 4004) {
+      // The app was deleted server-side: reconnecting is pointless. Refresh
+      // the list, which also clears the stale editor pane for a gone app.
+      refreshApps().catch(() => {});
+      return;
+    }
+    if (ev.code === 1008) {
+      // Auth rejected: retrying with the same credentials cannot succeed.
+      clearInterval(state.appsPoll);
+      showConnect();
+      $("connect-error").textContent = "Session or API key invalid — sign in again.";
+      return;
+    }
     // Reconnect with exponential backoff, capped at 30s. Never give up: a
     // server restart minutes later should not leave the UI silently stale.
-    if (state.selected === name) {
-      const delay = Math.min(30000, 2000 * Math.pow(2, attempt));
-      state.wsRetry = setTimeout(() => openWs(name, attempt + 1), delay);
-    }
+    const delay = Math.min(30000, 2000 * Math.pow(2, attempt));
+    state.wsRetry = setTimeout(() => openWs(name, attempt + 1), delay);
   };
   ws.onmessage = (ev) => {
     let msg;
@@ -1167,30 +1194,39 @@ function setLive(on) {
 }
 
 async function onRemoteUpdate(msg) {
-  applyRevision(msg.revision);
+  // Apply monotonically: ignore out-of-order or duplicate broadcasts whose
+  // revision is not newer than what we already have.
+  if (msg.revision != null && state.revision != null && msg.revision <= state.revision) return;
   refreshApps().catch(() => {});
+  if (anyDirty()) {
+    // Do NOT adopt the new revision or reset pristine while there are unsaved
+    // edits: the eventual Save must carry the OLD revision so the server can
+    // 409 instead of silently overwriting the other writer's change. The
+    // conflict-on-save flow then guides the user.
+    const warn = '<div class="notice warn">This config changed on the server ' +
+      "(revision " + esc(msg.revision) + "). Your unsaved edits are still here; " +
+      "saving will report a conflict." +
+      '<div class="notice-actions">' +
+      '<button class="btn sm" id="accept-remote">Load server version</button></div></div>';
+    if (state.activeTab === "config" && configEd) {
+      configNotice(warn);
+      $("accept-remote").onclick = () => loadAppDetail(state.selected);
+    } else if (state.activeTab === "schema" && schemaEd) {
+      schemaNotice(warn);
+      $("accept-remote").onclick = () => loadAppDetail(state.selected);
+    }
+    return;
+  }
+  applyRevision(msg.revision);
   if (msg.data !== undefined) {
     state.configObj = msg.data;
     if (state.activeTab === "config" && configEd) {
       let incoming;
       try { incoming = await serialize(msg.data, state.configFormat); }
       catch (_) { incoming = JSON.stringify(msg.data, null, 2); }
-      if (!isConfigDirty()) {
-        state.pristine = incoming;
-        configEd.value = incoming;
-        updateDirty();
-      } else {
-        state.pristine = incoming;
-        configNotice('<div class="notice warn">This config changed on the server ' +
-          "(revision " + esc(msg.revision) + "). Your unsaved edits are still here." +
-          '<div class="notice-actions">' +
-          '<button class="btn sm" id="accept-remote">Load server version</button></div></div>');
-        $("accept-remote").onclick = () => {
-          configEd.value = incoming;
-          updateDirty();
-          configNotice("");
-        };
-      }
+      state.pristine = incoming;
+      configEd.value = incoming;
+      updateDirty();
     }
   }
   if (state.activeTab === "history") renderHistoryTab();

@@ -284,7 +284,14 @@ class AppStore:
             return []
         apps = []
         for path in sorted(self.data_dir.glob("*.json")):
-            data = load_file(path)
+            try:
+                data = load_file(path)
+            except (ValueError, IOError) as exc:
+                # One corrupt file must not take the whole service down.
+                logging.getLogger(__name__).error(
+                    "Skipping unreadable app file %s: %s", path, exc
+                )
+                continue
             if data:
                 apps.append(data)
         return apps
@@ -328,16 +335,24 @@ class AppManager:
                 continue
             config_data = raw.get("config") or {}
             schema = raw.get("schema")
-            app = ConfigApp(
-                name=name,
-                config=Nacho(config_data, schema=schema, events=True),
-                description=raw.get("description"),
-                schema=schema,
-                logger=self.logger,
-                revision=int(raw.get("revision") or 1),
-                created_at=raw.get("created_at") or utc_now(),
-                updated_at=raw.get("updated_at") or utc_now(),
-            )
+            try:
+                app = ConfigApp(
+                    name=name,
+                    config=Nacho(config_data, schema=schema),
+                    description=raw.get("description"),
+                    schema=schema,
+                    logger=self.logger,
+                    revision=int(raw.get("revision") or 1),
+                    created_at=raw.get("created_at") or utc_now(),
+                    updated_at=raw.get("updated_at") or utc_now(),
+                )
+            except Exception as exc:
+                # An app whose persisted config no longer satisfies its
+                # schema (or is otherwise broken) is skipped with a loud
+                # log — a config service must not refuse to start over one
+                # bad app and take every other app down with it.
+                self.logger.error("Skipping unloadable app %r: %s", name, exc)
+                continue
             self._apps[name] = app
 
     def create(
@@ -357,7 +372,7 @@ class AppManager:
             if name in self._apps:
                 self._apps[name].cleanup()
 
-            app_config = config or Nacho(config_data or {}, schema=schema, events=True)
+            app_config = config or Nacho(config_data or {}, schema=schema)
             app = ConfigApp(
                 name=name,
                 config=app_config,
@@ -379,16 +394,24 @@ class AppManager:
         schema: Optional[Dict[str, Any]] = None,
         expected_revision: Optional[int] = None,
     ) -> ConfigApp:
-        """Replace an app's config/schema/description. Renaming is rename()'s job."""
+        """Replace an app's config/schema/description. Renaming is rename()'s job.
+
+        PUT semantics: an omitted description clears the stored one.
+        Identical payloads are no-ops — the revision does not bump, so a
+        reconciliation loop re-PUTting the same config cannot flush the
+        history ring.
+        """
         with self._lock:
             current = self._require_app(name)
             self._check_revision(current, expected_revision)
 
             target_schema = schema if schema is not None else current.schema
-            config_changed = current.config.replace(config_data, schema=target_schema)
-            metadata_changed = (
-                description != current.description or target_schema != current.schema
-            )
+            schema_changed = target_schema != current.schema
+            if schema_changed:
+                config_changed = current.config.replace(config_data, schema=target_schema)
+            else:
+                config_changed = current.config.replace(config_data)
+            metadata_changed = description != current.description or schema_changed
 
             current.description = description
             current.schema = copy.deepcopy(target_schema)
@@ -416,10 +439,13 @@ class AppManager:
             if app is None:
                 raise KeyError(current_name)
             self._check_revision(app, expected_revision)
-            if description is not None:
+            changed = False
+            if description is not None and description != app.description:
                 app.description = description
+                changed = True
 
-            if new_name and new_name != current_name:
+            renamed = bool(new_name and new_name != current_name)
+            if renamed:
                 validate_app_name(new_name)
                 if new_name in self._apps:
                     raise ValueError(f"App {new_name!r} already exists")
@@ -429,8 +455,15 @@ class AppManager:
                 app.name = new_name
                 app.hub.app_name = new_name
                 self._apps[new_name] = app
+                changed = True
 
-            self.persist(app, changed=True, notify=True)
+            self.persist(app, changed=changed, notify=changed)
+            if renamed:
+                # Disconnect subscribers of the old name: their /ws/{old}
+                # endpoint is dead, and a reconnect surfaces a clear
+                # "app not found" instead of silently mirroring the renamed
+                # app while REST writes target the old name.
+                app.hub.close_all()
             return app
 
     def persist(self, app: ConfigApp, *, changed: bool = True, notify: bool = False) -> None:
@@ -474,9 +507,11 @@ class AppManager:
         with self._lock:
             app = self._require_app(name)
             self._check_revision(app, expected_revision)
-            app.config.replace(app.config.get_all(), schema=schema)
-            app.schema = copy.deepcopy(schema)
-            self.persist(app, changed=True, notify=True)
+            schema_changed = schema != app.schema
+            if schema_changed:
+                app.config.replace(app.config.get_all(), schema=schema)
+                app.schema = copy.deepcopy(schema)
+            self.persist(app, changed=schema_changed, notify=schema_changed)
             return app
 
     def set_config_path(
