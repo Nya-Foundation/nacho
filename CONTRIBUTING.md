@@ -58,12 +58,12 @@ Keep each branch focused on a single change.
 
 ## Code style
 
-Formatting is enforced by Black and isort (Black-compatible profile). Format
-before pushing:
+Formatting and linting are enforced by [ruff](https://docs.astral.sh/ruff/)
+(configured in `pyproject.toml`). Format and lint before pushing:
 
 ```bash
-uv run isort --profile black .
-uv run black .
+uvx ruff format .
+uvx ruff check .
 ```
 
 CI checks formatting on every pull request. Beyond formatting, match the
@@ -73,7 +73,7 @@ handling, and comments only where the code cannot speak for itself.
 ## Testing
 
 Tests live under `tests/`, grouped by scope: `unit/`, `smoke/`,
-`integration/`, `e2e/`, and `docker/`. Each test is automatically tagged with
+`integration/`, `e2e/`, `ui/`, and `docker/`. Each test is automatically tagged with
 a pytest marker matching its folder, so there is no per-file marker
 boilerplate.
 
@@ -82,6 +82,7 @@ The default run executes the fast suites only; the heavier suites are opt-in:
 ```bash
 uv run pytest                                   # unit + smoke; run on every change
 uv run pytest -m "integration or e2e" --no-cov  # spawns real server processes
+uv run pytest -m ui --no-cov                    # drives the web UI (needs `playwright install chromium`)
 uv run pytest -m docker --no-cov                # builds and exercises the Docker image
 uv run pytest -m "" --no-cov                    # everything
 ```
@@ -122,8 +123,9 @@ major version bump.
 
 Merges to `main` run the release pipeline automatically:
 
-1. The full test suite runs (unit, smoke, integration, and e2e), and the
-   release is blocked if anything fails.
+1. The full test suite runs (unit, smoke, integration, e2e, the browser UI
+   suite, and the Docker image suite), and the release is blocked if
+   anything fails.
 2. semantic-release calculates the next version from commit messages.
 3. A GitHub release is created with a generated changelog.
 4. The package is published to PyPI.

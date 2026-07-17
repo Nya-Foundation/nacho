@@ -123,6 +123,8 @@ nacho server \
 
 服务器默认绑定到 `127.0.0.1`。传入 `--host 0.0.0.0` 可接受来自其他机器的连接；如果在未设置 `--api-key` 的情况下对外暴露服务器，CLI 会打印警告，因为未启用认证的服务器会向任何能访问它的人授予完整的写权限。
 
+每个数据目录只应运行**一个服务器进程**。应用状态、修订计数器和 WebSocket 订阅都保存在进程内存中，因此在多个 worker 后运行（例如 `uvicorn --workers 2`）或让两个服务器进程指向同一个 `--data-dir` 会导致修订号不一致和实时更新丢失。
+
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `--host` | `127.0.0.1` | 绑定地址（`0.0.0.0` 表示监听所有网络接口） |
@@ -522,6 +524,8 @@ nacho set app.flags '{"beta": true}' --type json --remote http://config-server:8
 nacho set database.port 5432 --config config.yaml
 nacho delete legacy.setting --config config.yaml
 ```
+
+本地写入是对文件的读取-修改-写回操作，没有跨进程锁：文件本身是原子写入的，但两个并发的 `nacho set` 命令竞争同一个文件时可能丢失其中一个更新。并发写入方应改为指向服务器（`--remote`）——这正是带修订检查的写入的用途。
 
 ### 应用
 

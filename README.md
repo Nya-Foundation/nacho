@@ -136,6 +136,12 @@ connections from other machines; the CLI prints a warning if you expose the
 server without `--api-key`, because an unauthenticated server grants full
 write access to anyone who can reach it.
 
+Run exactly **one server process** per data directory. App state, revision
+counters, and WebSocket subscriptions live in process memory, so running the
+app behind multiple workers (e.g. `uvicorn --workers 2`) or pointing two
+server processes at the same `--data-dir` produces inconsistent revisions and
+missed live updates.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--host` | `127.0.0.1` | Bind address (`0.0.0.0` to listen on all interfaces) |
@@ -614,6 +620,11 @@ nacho set app.flags '{"beta": true}' --type json --remote http://config-server:8
 nacho set database.port 5432 --config config.yaml
 nacho delete legacy.setting --config config.yaml
 ```
+
+Local writes are read-modify-write on the file with no cross-process lock:
+the file itself is written atomically, but two `nacho set` commands racing on
+the same file can lose one of the updates. Point concurrent writers at a
+server (`--remote`) instead — that is what revision-checked writes are for.
 
 ### Apps
 
