@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import os
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -22,6 +23,20 @@ from .models import validate_app_name
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def safe_child_path(base: Path, name: str) -> Path:
+    """Join *name* onto *base*, refusing anything that escapes it.
+
+    App names are validated against a strict regex before they reach the
+    filesystem, so this normalize-and-check is defense in depth — and the
+    kind of guard static analysis can verify.
+    """
+    base_str = str(base)
+    candidate = os.path.normpath(os.path.join(base_str, name))
+    if not candidate.startswith(base_str + os.sep):
+        raise ValueError(f"Path component {name!r} escapes {base_str!r}")
+    return Path(candidate)
 
 
 class RevisionConflictError(RuntimeError):
@@ -209,7 +224,7 @@ class HistoryStore:
 
     def _app_dir(self, name: str) -> Path:
         validate_app_name(name)
-        return self.dir / name  # type: ignore[operator]
+        return safe_child_path(self.dir, name)  # type: ignore[arg-type]
 
     def record(self, snapshot: Dict[str, Any]) -> None:
         """Store *snapshot* under its revision and prune beyond the limit."""
@@ -299,7 +314,7 @@ class AppStore:
         if self.data_dir is None:
             raise RuntimeError("AppStore has no data directory")
         validate_app_name(name)
-        return self.data_dir / f"{name}.json"
+        return safe_child_path(self.data_dir, f"{name}.json")
 
     def load(self) -> Iterable[Dict[str, Any]]:
         if self.data_dir is None:

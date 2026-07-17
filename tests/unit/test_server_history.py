@@ -2,7 +2,20 @@
 
 import pytest
 
-from nacho.server.runtime import AppManager, HistoryStore, RevisionConflictError
+from nacho.server.runtime import (
+    AppManager,
+    HistoryStore,
+    RevisionConflictError,
+    safe_child_path,
+)
+
+
+def test_safe_child_path_joins_and_refuses_escapes(tmp_path):
+    assert safe_child_path(tmp_path, "svc") == tmp_path / "svc"
+    assert safe_child_path(tmp_path, "svc.json") == tmp_path / "svc.json"
+    for hostile in ("..", "../escape", "a/../../b", "/etc/passwd"):
+        with pytest.raises(ValueError):
+            safe_child_path(tmp_path, hostile)
 
 
 def _snapshot(name="svc", revision=1, config=None, schema=None):
