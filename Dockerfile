@@ -70,6 +70,7 @@ USER nacho
 # Expose the Nacho API port
 EXPOSE 8000
 
-# Command to run the application with the correct module path
+# Command to run the application with the correct module path.
+# --host 0.0.0.0 is required inside a container (the CLI default is loopback).
 ENTRYPOINT ["nacho"]
-CMD ["server", "--config", "config.yaml"]
+CMD ["server", "--host", "0.0.0.0", "--config", "config.yaml"]

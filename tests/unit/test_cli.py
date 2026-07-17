@@ -6,9 +6,8 @@ so the suite needs no network or running server.
 """
 
 import json
-from argparse import ArgumentTypeError, Namespace
+from argparse import Namespace
 
-import pytest
 import yaml
 
 from nacho.cli import main as cli
@@ -28,7 +27,6 @@ from nacho.cli.main import (
     remote_config_url,
     remote_headers,
     remote_request_error,
-    str2bool,
 )
 
 
@@ -53,21 +51,6 @@ _NO_JSON = object()
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("value", ["yes", "true", "T", "1"])
-def test_str2bool_truthy(value):
-    assert str2bool(value) is True
-
-
-@pytest.mark.parametrize("value", ["no", "false", "F", "0"])
-def test_str2bool_falsy(value):
-    assert str2bool(value) is False
-
-
-def test_str2bool_rejects_garbage():
-    with pytest.raises(ArgumentTypeError):
-        str2bool("maybe")
-
-
 def test_banner_includes_version():
     from nacho._version import __version__
 
@@ -419,8 +402,8 @@ class FakeOrchestrator:
 
 
 def _server_args(**overrides):
-    base = dict(host="0.0.0.0", port=8000, config=None, schema=None, data_dir=None,
-                api_key=None, app_name=None, event=False, read_only=False, reload=False)
+    base = dict(host="127.0.0.1", port=8000, config=None, schema=None, data_dir=None,
+                api_key=None, app_name=None, read_only=False, reload=False)
     base.update(overrides)
     return Namespace(**base)
 

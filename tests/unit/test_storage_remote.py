@@ -315,7 +315,7 @@ def test_close_joins_a_live_watcher_thread(backend, monkeypatch):
 def test_ws_loop_gives_up_after_max_reconnects(backend, monkeypatch):
     import nacho.storage.remote as remote_mod
 
-    monkeypatch.setattr(remote_mod.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(remote_mod, "_WS_RECONNECT_DELAY", 0)
     calls = []
 
     def fake_wsapp(*a, **k):
@@ -335,3 +335,26 @@ def test_ws_loop_gives_up_after_max_reconnects(backend, monkeypatch):
     backend._running = True
     backend._ws_loop()  # crash -> reconnect -> exceed limit -> give up
     assert len(calls) >= 2
+
+
+def test_successful_open_resets_reconnect_counter(backend):
+    backend._ws_attempts = 4
+    backend._on_open(None)
+    assert backend._ws_attempts == 0
+
+
+def test_close_interrupts_reconnect_backoff(backend, monkeypatch):
+    import nacho.storage.remote as remote_mod
+
+    monkeypatch.setattr(remote_mod, "_WS_RECONNECT_DELAY", 60)
+
+    def fake_wsapp(*a, **k):
+        ws = types.SimpleNamespace()
+        ws.run_forever = lambda: None  # disconnect immediately -> enter backoff
+        ws.close = lambda: None
+        return ws
+
+    monkeypatch.setattr(remote_mod.websocket, "WebSocketApp", fake_wsapp)
+    backend.start_watching()
+    backend.close()  # must return promptly despite the 60s backoff
+    assert not backend._ws_thread.is_alive()

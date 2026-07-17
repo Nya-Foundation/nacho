@@ -94,14 +94,6 @@ BUILT_IN_TEMPLATES = {
 }
 
 
-def str2bool(x):
-    if x.lower() in ("yes", "true", "t", "1"):
-        return True
-    if x.lower() in ("no", "false", "f", "0"):
-        return False
-    raise argparse.ArgumentTypeError(f"Boolean value expected, got {x!r}")
-
-
 def create_parser() -> argparse.ArgumentParser:
     """
     Create the main argument parser.
@@ -114,10 +106,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
         "--debug",
-        type=str2bool,
-        nargs="?",
-        const=True,
-        default=False,
+        action="store_true",
         help="Enable debug logging",
     )
 
@@ -125,7 +114,11 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Server command
     server = subparsers.add_parser("server", help="Start configuration server")
-    server.add_argument("--host", default="0.0.0.0", help="Server host")
+    server.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Server host (use 0.0.0.0 to listen on all interfaces)",
+    )
     server.add_argument("--port", type=int, default=8000, help="Server port")
     server.add_argument("--config", "-c", help="Configuration file path")
     server.add_argument("--schema", help="Schema file path")
@@ -133,27 +126,13 @@ def create_parser() -> argparse.ArgumentParser:
     server.add_argument("--api-key", help="API key for authentication")
     server.add_argument("--app-name", help="Application name for config server")
     server.add_argument(
-        "--event",
-        type=str2bool,
-        nargs="?",
-        const=True,
-        default=False,
-        help="Event pipeline for configuration changes",
-    )
-    server.add_argument(
         "--read-only",
-        type=str2bool,
-        nargs="?",
-        const=True,
-        default=False,
+        action="store_true",
         help="Read-only mode",
     )
     server.add_argument(
         "--reload",
-        type=str2bool,
-        nargs="?",
-        const=True,
-        default=False,
+        action="store_true",
         help="Auto-reload for development",
     )
 
@@ -243,7 +222,6 @@ def create_config(
     remote_url: Optional[str] = None,
     remote_app_name: Optional[str] = None,
     api_key: Optional[str] = None,
-    event: Optional[bool] = False,
 ) -> Nacho:
     """
     Create a Nacho instance from CLI arguments.
@@ -266,7 +244,6 @@ def create_config(
         storage=storage,
         schema=schema_path,
         read_only=read_only,
-        events=bool(event),
     )
 
 
@@ -402,13 +379,18 @@ def cmd_server(args: argparse.Namespace) -> int:
     apps = None
     config: Optional[Nacho] = None
     app_name = args.app_name or "default"
+    if args.host not in ("127.0.0.1", "localhost", "::1") and not args.api_key:
+        print(
+            "WARNING: serving on a non-loopback interface without --api-key — "
+            "anyone who can reach this host has full write access.",
+            file=sys.stderr,
+        )
+
     if args.config:
         config = create_config(
             args.config,
             schema=args.schema,
-            api_key=args.api_key,
             read_only=args.read_only,
-            event=args.event,
         )
         apps = {app_name: config}
 

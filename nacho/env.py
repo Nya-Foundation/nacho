@@ -24,9 +24,10 @@ def _parse_value(raw: str) -> Any:
     if not raw:
         return ""
     low = raw.lower()
-    if low in ("true", "yes", "1", "on"):
+    # "1"/"0" deliberately parse as integers below, not booleans.
+    if low in ("true", "yes", "on"):
         return True
-    if low in ("false", "no", "0", "off"):
+    if low in ("false", "no", "off"):
         return False
     if low in ("null", "none", "~"):
         return None

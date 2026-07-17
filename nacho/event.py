@@ -34,8 +34,8 @@ def _log_task_result(task: asyncio.Task) -> None:
         task.result()
     except asyncio.CancelledError:
         pass
-    except Exception as exc:
-        logger.error("Async event handler raised: %s", exc)
+    except Exception:
+        logger.error("Async event handler raised", exc_info=True)
 
 
 class _AsyncEventRunner:
@@ -249,8 +249,13 @@ class EventHandler:
                     _async_runner.run(coro)
             else:
                 self.callback(**kwargs)
-        except Exception as exc:
-            logger.error("Handler %r raised: %s", self.callback.__name__, exc)
+        except Exception:
+            # getattr: functools.partial and callable objects have no __name__.
+            logger.error(
+                "Handler %r raised",
+                getattr(self.callback, "__name__", repr(self.callback)),
+                exc_info=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +288,7 @@ class EventPipeline:
             self._handlers.sort(key=lambda h: h.priority)
         logger.debug(
             "Registered handler %r for %s%s",
-            callback.__name__,
+            getattr(callback, "__name__", repr(callback)),
             [e.value for e in event_types],
             f" on {path_pattern!r}" if path_pattern is not None else "",
         )

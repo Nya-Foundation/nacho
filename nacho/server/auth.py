@@ -41,7 +41,10 @@ class AuthGuard:
         token = token.strip()
         if token.startswith(_AUTH_PREFIX):
             token = token[len(_AUTH_PREFIX) :]
-        return bool(token) and hmac.compare_digest(token, self.api_key)
+        # Compare as bytes: compare_digest raises TypeError on non-ASCII str input.
+        return bool(token) and hmac.compare_digest(
+            token.encode("utf-8"), self.api_key.encode("utf-8")
+        )
 
     def verify_request(self, request: Request) -> bool:
         """Verify HTTP auth from the session cookie or Authorization header."""

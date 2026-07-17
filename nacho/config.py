@@ -264,10 +264,10 @@ class Nacho:
                 return False
             candidate = self._effective_from_stored(candidate_stored)
             self._validate(candidate)
-            old = copy.deepcopy(self._data)
+            old = self._data
             self._stored_data = candidate_stored
             self._data = candidate
-        self._emit(detect_changes(old, self._data))
+        self._emit(old, candidate)
         return True
 
     def delete(self, key: str) -> bool:
@@ -277,14 +277,14 @@ class Nacho:
             _MISSING = object()
             if get_nested_value(self._stored_data, key, _MISSING) is _MISSING:
                 return False
-            old = copy.deepcopy(self._data)
+            old = self._data
             candidate_stored = copy.deepcopy(self._stored_data)
             delete_nested_value(candidate_stored, key)
             candidate = self._effective_from_stored(candidate_stored)
             self._validate(candidate)
             self._stored_data = candidate_stored
             self._data = candidate
-        self._emit(detect_changes(old, self._data))
+        self._emit(old, candidate)
         return True
 
     def update(self, data: Dict[str, Any]) -> bool:
@@ -301,10 +301,10 @@ class Nacho:
             if candidate_stored == self._stored_data and candidate == self._data:
                 return False
             self._validate(candidate)
-            old = copy.deepcopy(self._data)
+            old = self._data
             self._stored_data = candidate_stored
             self._data = candidate
-        self._emit(detect_changes(old, self._data))
+        self._emit(old, candidate)
         return True
 
     def replace(
@@ -341,11 +341,11 @@ class Nacho:
                 and not schema_changed
             ):
                 return False
-            old = copy.deepcopy(self._data)
+            old = self._data
             self._validator = validator
             self._stored_data = candidate_stored
             self._data = candidate
-        self._emit(detect_changes(old, self._data))
+        self._emit(old, candidate)
         return True
 
     # ------------------------------------------------------------------
@@ -367,7 +367,7 @@ class Nacho:
                 return copy.deepcopy(self._data)
 
         with self._lock:
-            old = copy.deepcopy(self._data)
+            old = self._data
             if not isinstance(raw, dict):
                 raise StorageError(f"Storage backend returned {type(raw).__name__}, expected dict")
             candidate_stored = copy.deepcopy(raw)
@@ -376,14 +376,13 @@ class Nacho:
             self._stored_data = candidate_stored
             self._data = candidate
 
-        changes = detect_changes(old, self._data)
         if not self._events_disabled:
-            snapshot = copy.deepcopy(self._data)
-            reload_change = Change(EventType.RELOAD, None, old, snapshot)
-            self._pipeline.dispatch([reload_change], snapshot)
+            reload_change = Change(EventType.RELOAD, None, old, candidate)
+            self._pipeline.dispatch([reload_change], candidate)
+            changes = detect_changes(old, candidate)
             if changes:
-                self._pipeline.dispatch(changes, snapshot)
-        return copy.deepcopy(self._data)
+                self._pipeline.dispatch(changes, candidate)
+        return copy.deepcopy(candidate)
 
     reload = load  # alias
 
@@ -444,6 +443,7 @@ class Nacho:
         ``path_pattern="*"``             — fires for every per-path CHANGE (not aggregate).
         ``path_pattern="database.*"``    — fires for any key under ``database``.
         """
+        self._warn_if_events_disabled()
         return on_change(self._pipeline, path_pattern, priority)
 
     def on_event(
@@ -453,7 +453,15 @@ class Nacho:
         priority: int = 100,
     ) -> Callable:
         """Decorator: register a handler for specific *event_type*(s)."""
+        self._warn_if_events_disabled()
         return on_event(self._pipeline, event_type, path_pattern, priority)
+
+    def _warn_if_events_disabled(self) -> None:
+        if self._events_disabled:
+            logger.warning(
+                "Registering an event handler on a Nacho instance created with "
+                "events=False — the handler will never fire. Pass events=True to enable."
+            )
 
     # ------------------------------------------------------------------
     # Schema helpers
@@ -516,12 +524,18 @@ class Nacho:
         if validator is not None:
             validator.validate(data)  # raises ValidationError
 
-    def _emit(self, changes: List[Change]) -> None:
-        if self._events_disabled or not changes:
+    def _emit(self, old: Dict[str, Any], new: Dict[str, Any]) -> None:
+        """Diff *old* → *new* and dispatch events.
+
+        Both arguments are the snapshots swapped under the write lock, so events
+        always describe exactly the transition the writer performed. The diff is
+        skipped entirely when events are disabled (the default).
+        """
+        if self._events_disabled:
             return
-        with self._lock:
-            snapshot = copy.deepcopy(self._data)
-        self._pipeline.dispatch(changes, snapshot)
+        changes = detect_changes(old, new)
+        if changes:
+            self._pipeline.dispatch(changes, new)
 
 
 # ---------------------------------------------------------------------------

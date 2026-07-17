@@ -37,3 +37,6 @@ __all__ = [
     "HAS_REMOTE_DEPS",
     "HAS_SERVER_DEPS",
 ]
+if not HAS_SERVER_DEPS:
+    # Keep __all__ truthful so `from nacho import *` never hits an undefined name.
+    __all__.remove("NachoOrchestrator")

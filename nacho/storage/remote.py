@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 import threading
-import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -64,6 +63,8 @@ class RemoteStorageBackend(StorageBackend):
 
         self._ws: Optional[websocket.WebSocketApp] = None
         self._ws_thread: Optional[threading.Thread] = None
+        self._ws_attempts = 0
+        self._stop = threading.Event()
         self._running = False
         self._connected = False
         self._watch_requested = watch
@@ -114,6 +115,7 @@ class RemoteStorageBackend(StorageBackend):
 
     def close(self) -> None:
         self._running = False
+        self._stop.set()
         if self._ws:
             self._ws.close()
         if self._ws_thread and self._ws_thread.is_alive():
@@ -210,6 +212,8 @@ class RemoteStorageBackend(StorageBackend):
         if self._running:
             return
         self._running = True
+        self._ws_attempts = 0
+        self._stop.clear()
         self._ws_thread = threading.Thread(
             target=self._ws_loop,
             daemon=True,
@@ -218,7 +222,6 @@ class RemoteStorageBackend(StorageBackend):
         self._ws_thread.start()
 
     def _ws_loop(self) -> None:
-        attempt = 0
         while self._running:
             try:
                 self._ws = websocket.WebSocketApp(
@@ -230,16 +233,16 @@ class RemoteStorageBackend(StorageBackend):
                     on_close=self._on_close,
                 )
                 self._ws.run_forever()
-            except Exception as exc:
-                logger.error("WS error for %r: %s", self.app_name, exc)
+            except Exception:
+                logger.error("WS error for %r", self.app_name, exc_info=True)
 
             if not self._running:
                 break
 
-            attempt += 1
-            if self._reconnect and attempt > self._reconnect:
+            self._ws_attempts += 1
+            if self._reconnect and self._ws_attempts > self._reconnect:
                 logger.error(
-                    "WS: max reconnect attempts (%d) reached for %r — giving up",
+                    "WS: max consecutive reconnect attempts (%d) reached for %r — giving up",
                     self._reconnect,
                     self.app_name,
                 )
@@ -248,11 +251,16 @@ class RemoteStorageBackend(StorageBackend):
                 "WS: reconnecting to %r in %.1fs (attempt %d)",
                 self.app_name,
                 _WS_RECONNECT_DELAY,
-                attempt,
+                self._ws_attempts,
             )
-            time.sleep(_WS_RECONNECT_DELAY)
+            # Event.wait so close() interrupts the backoff instead of blocking join().
+            if self._stop.wait(_WS_RECONNECT_DELAY):
+                break
 
     def _on_open(self, ws: websocket.WebSocketApp) -> None:
+        # A successful connection resets the counter so `reconnect` bounds
+        # consecutive failures, not total disconnects over the process lifetime.
+        self._ws_attempts = 0
         logger.debug("WS connected for app %r", self.app_name)
 
     def _on_message(self, ws: websocket.WebSocketApp, raw: str) -> None:
@@ -273,8 +281,8 @@ class RemoteStorageBackend(StorageBackend):
             if callback:
                 try:
                     callback(data)
-                except Exception as exc:
-                    logger.error("on_remote_change raised: %s", exc)
+                except Exception:
+                    logger.error("on_remote_change raised", exc_info=True)
         elif msg_type in ("update", "initial_config"):
             logger.warning("WS: ignored invalid config payload for %r", self.app_name)
 
