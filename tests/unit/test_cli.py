@@ -703,6 +703,54 @@ def test_history_show_missing_revision_exits_not_found(http, capsys):
     assert "not in history" in capsys.readouterr().err
 
 
+def test_history_diff_between_two_revisions(http, capsys):
+    http["get"].append(
+        (
+            "/api/apps/svc/history/2",
+            FakeResponse(200, {"data": {"revision": 2, "config": {"a": 1}, "schema": None}}),
+        )
+    )
+    http["get"].append(
+        (
+            "/api/apps/svc/history/3",
+            FakeResponse(200, {"data": {"revision": 3, "config": {"a": 2}, "schema": None}}),
+        )
+    )
+    assert main_cli(["history", "diff", "2", "3", *REMOTE]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "--- revision 2" in out and "+++ revision 3" in out
+    assert '-  "a": 1' in out and '+  "a": 2' in out
+
+
+def test_history_diff_against_current_config_notes_schema_change(http, capsys):
+    http["get"].append(
+        (
+            "/api/apps/svc/history/2",
+            FakeResponse(
+                200, {"data": {"revision": 2, "config": {"a": 1}, "schema": {"type": "object"}}}
+            ),
+        )
+    )
+    http["get"].append(
+        (
+            "/api/apps/svc/config",
+            FakeResponse(200, {"a": 1}, headers={"X-Nacho-Revision": "5"}),
+        )
+    )
+    http["get"].append(("/api/apps/svc/schema", FakeResponse(200, {"data": None})))
+    assert main_cli(["history", "diff", "2", *REMOTE]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "schema also differs" in out
+
+
+def test_history_diff_reports_no_differences(http, capsys):
+    snapshot = FakeResponse(200, {"data": {"revision": 2, "config": {"a": 1}, "schema": None}})
+    http["get"].append(("/api/apps/svc/history/2", snapshot))
+    http["get"].append(("/api/apps/svc/history/3", snapshot))
+    assert main_cli(["history", "diff", "2", "3", *REMOTE]) == EXIT_OK
+    assert capsys.readouterr().out.strip() == "No differences."
+
+
 def test_rollback_posts_revision_and_check(http, capsys):
     http["post"].append(
         (

@@ -157,6 +157,78 @@ def test_cli_auth_flow(make_live_server):
     assert json.loads(fetched.stdout) == 42
 
 
+def test_cli_read_only_api_key(make_live_server):
+    """A read-only key can read and watch but never write."""
+    server = make_live_server(api_key="sekret", extra_args=("--read-only-api-key", "ro-key"))
+
+    seeded = _run(
+        "set",
+        "answer",
+        "42",
+        "--remote",
+        server.url,
+        "--app-name",
+        "default",
+        "--api-key",
+        "sekret",
+    )
+    assert seeded.returncode == 0, seeded.stderr
+
+    fetched = _run(
+        "get",
+        "answer",
+        "--format",
+        "json",
+        "--remote",
+        server.url,
+        "--app-name",
+        "default",
+        "--api-key",
+        "ro-key",
+    )
+    assert fetched.returncode == 0, fetched.stderr
+    assert json.loads(fetched.stdout) == 42
+
+    denied = _run(
+        "set",
+        "answer",
+        "43",
+        "--remote",
+        server.url,
+        "--app-name",
+        "default",
+        "--api-key",
+        "ro-key",
+    )
+    assert denied.returncode == 5  # auth-failure exit code
+    assert "read-only" in denied.stderr
+
+
+def test_cli_history_diff_flow(live_server):
+    """`history diff` renders the change between a revision and the present."""
+    for value in ("one", "two"):
+        result = _run("set", "release", value, "--remote", live_server, "--app-name", "default")
+        assert result.returncode == 0, result.stderr
+
+    listed = _run(
+        "history",
+        "list",
+        "--format",
+        "json",
+        "--remote",
+        live_server,
+        "--app-name",
+        "default",
+    )
+    assert listed.returncode == 0, listed.stderr
+    base = json.loads(listed.stdout)[1]["revision"]  # the "one" snapshot
+
+    diffed = _run("history", "diff", str(base), "--remote", live_server, "--app-name", "default")
+    assert diffed.returncode == 0, diffed.stderr
+    assert '-  "release": "one"' in diffed.stdout
+    assert '+  "release": "two"' in diffed.stdout
+
+
 def test_cli_watch_streams_live_updates(live_server):
     """`nacho watch` prints the current config, then each pushed update.
 

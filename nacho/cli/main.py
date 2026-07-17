@@ -245,6 +245,10 @@ def create_parser() -> argparse.ArgumentParser:
     server.add_argument("--schema", help="Schema file path")
     server.add_argument("--data-dir", help="Directory for API-created app state")
     server.add_argument("--api-key", help="API key for authentication")
+    server.add_argument(
+        "--read-only-api-key",
+        help="Additional API key granting read access only (GETs and WebSocket watch)",
+    )
     server.add_argument("--app-name", help="Application name for config server")
     server.add_argument(
         "--history-limit",
@@ -388,6 +392,20 @@ def create_parser() -> argparse.ArgumentParser:
     history_show.add_argument("revision", type=int, help="Revision number")
     history_show.set_defaults(func=cmd_history_show)
 
+    history_diff = history_sub.add_parser(
+        "diff",
+        parents=[debug, remote_req],
+        help="Show a unified diff between two revisions (or one revision and the current config)",
+    )
+    history_diff.add_argument("revision_a", type=int, help="Base revision")
+    history_diff.add_argument(
+        "revision_b",
+        type=int,
+        nargs="?",
+        help="Revision to compare against (default: the current config)",
+    )
+    history_diff.set_defaults(func=cmd_history_diff)
+
     # Rollback command
     rollback = subparsers.add_parser(
         "rollback",
@@ -425,7 +443,9 @@ def cmd_server(args: argparse.Namespace) -> int:
 
     print(banner())
 
-    if not args.api_key and not is_loopback_host(args.host):
+    # With only a read-only key configured, nobody can write at all, so the
+    # exposure warning only applies when NO key protects the server.
+    if not args.api_key and not args.read_only_api_key and not is_loopback_host(args.host):
         print(
             "WARNING: serving on a non-loopback interface without --api-key — "
             "anyone who can reach this host has full write access.",
@@ -440,6 +460,7 @@ def cmd_server(args: argparse.Namespace) -> int:
     orchestrator = NachoOrchestrator(
         apps=apps,
         api_key=args.api_key,
+        read_only_api_key=args.read_only_api_key,
         read_only=args.read_only,
         data_dir=args.data_dir,
         history_limit=args.history_limit,
@@ -633,6 +654,47 @@ def cmd_history_list(args: argparse.Namespace) -> int:
 def cmd_history_show(args: argparse.Namespace) -> int:
     """Print one stored revision snapshot."""
     print(render(build_client(args).get_history_snapshot(args.revision), args.format))
+    return EXIT_OK
+
+
+@cli_command
+def cmd_history_diff(args: argparse.Namespace) -> int:
+    """Diff two stored revisions, or one revision against the current config."""
+    import difflib
+
+    client = build_client(args)
+    snapshot_a = client.get_history_snapshot(args.revision_a)
+    label_a = f"revision {args.revision_a}"
+    if args.revision_b is not None:
+        snapshot_b = client.get_history_snapshot(args.revision_b)
+        config_b = snapshot_b.get("config") or {}
+        schema_b = snapshot_b.get("schema")
+        label_b = f"revision {args.revision_b}"
+    else:
+        config_b, revision = client.get_config()
+        schema_b = client.get_schema()
+        label_b = f"current (revision {revision})"
+
+    def as_lines(config: dict) -> List[str]:
+        return json.dumps(config, indent=2, sort_keys=True, ensure_ascii=False).splitlines()
+
+    diff = list(
+        difflib.unified_diff(
+            as_lines(snapshot_a.get("config") or {}),
+            as_lines(config_b),
+            fromfile=label_a,
+            tofile=label_b,
+            lineterm="",
+        )
+    )
+    schema_differs = snapshot_a.get("schema") != schema_b
+    if not diff and not schema_differs:
+        print("No differences.")
+        return EXIT_OK
+    for line in diff:
+        print(line)
+    if schema_differs:
+        print(f"Note: the schema also differs between {label_a} and {label_b}.")
     return EXIT_OK
 
 
