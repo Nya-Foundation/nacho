@@ -4,380 +4,563 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Nacho — Configuration Manager</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20512%20512'%3E%3Crect%20width='512'%20height='512'%20rx='116'%20fill='%231E1E1B'/%3E%3Cpath%20d='M%20118%20388%20L%20118%20234%20A%2092%2092%200%200%201%20302%20234%20L%20302%20388%20L%20244%20388%20L%20244%20234%20A%2034%2034%200%200%200%20176%20234%20L%20176%20388%20Z'%20fill='%23F6F6F3'/%3E%3Ccircle%20cx='372'%20cy='342'%20r='46'%20fill='%23D6892A'/%3E%3C/svg%3E" />
 <style>
-/* --------------------------------------------------------------------- */
-/* Theme                                                                  */
-/* --------------------------------------------------------------------- */
+/* ===================================================================== */
+/* Design tokens — "Paper & Dot". Light is the primary canvas.            */
+/* ===================================================================== */
 :root {
-  --bg: #f6f6f3;
-  --surface: #ffffff;
-  --surface-2: #f0f0ec;
-  --border: #e3e3dc;
-  --text: #1e1e1b;
-  --muted: #76766c;
-  --accent: #d6892a;
-  --accent-fg: #ffffff;
-  --danger: #c4463a;
-  --ok: #2f9e5f;
-  --c-str: #2f8f4e;
-  --c-num: #2f6fb0;
-  --c-kw: #9b5cb8;
-  --radius: 8px;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --paper: #F6F6F3;
+  --sheet: #FFFFFF;
+  --ink: #1E1E1B;
+  --ink-strong: #141412;
+  --muted: #75756B;
+  --faint: #B9B9AE;
+  --rule: #E4E3DB;
+  --rule-strong: #CFCEC4;
+  --hover: color-mix(in srgb, var(--ink) 4%, transparent);
+  --amber: #D6892A;
+  --amber-strong: #A8681B;
+  --danger: #B3402F;
+  --scrim: rgba(30,30,27,.45);
+  --c-str: #51785D;
+  --c-num: #42688C;
+  --c-kw: #84618F;
+  --mk-tile: #1E1E1B;
+  --mk-n: #F6F6F3;
+  --mk-dot: #D6892A;
+  --shadow: 0 24px 48px -12px rgba(20,20,18,.25);
+  --r-btn: 6px;
+  --r-code: 10px;
+  --r-modal: 14px;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1a1a17;
-    --surface: #232320;
-    --surface-2: #2c2c27;
-    --border: #38382f;
-    --text: #ececea;
-    --muted: #9a9a8f;
-    --accent: #e0a44a;
-    --accent-fg: #1a1a17;
-    --danger: #e0685c;
-    --ok: #4cb878;
-    --c-str: #6cc28a;
-    --c-num: #6aa8e0;
-    --c-kw: #c08fda;
+    --paper: #1A1A17;
+    --sheet: #1E1E1B;
+    --ink: #F6F6F3;
+    --ink-strong: #FFFFFF;
+    --muted: #98988D;
+    --faint: #5A5A52;
+    --rule: #32322C;
+    --rule-strong: #44443C;
+    --amber: #E0A44A;
+    --amber-strong: #E0A44A;
+    --danger: #E06A55;
+    --scrim: rgba(0,0,0,.6);
+    --c-str: #8AB394;
+    --c-num: #84A9CC;
+    --c-kw: #B497BE;
+    --mk-tile: #F6F6F3;
+    --mk-n: #1E1E1B;
+    --mk-dot: #E0A44A;
+    --shadow: 0 24px 48px -12px rgba(0,0,0,.55);
   }
 }
 
+/* ===================================================================== */
+/* Base                                                                   */
+/* ===================================================================== */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   margin: 0;
   font-family: var(--sans);
-  background: var(--bg);
-  color: var(--text);
+  background: var(--paper);
+  color: var(--ink);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
-button { font-family: inherit; font-size: 13px; cursor: pointer; }
-input, textarea, select { font-family: inherit; font-size: 13px; }
-h1, h2, h3 { margin: 0; font-weight: 600; }
+button { font-family: inherit; font-size: 13px; cursor: pointer; color: inherit; }
+input, textarea { font-family: inherit; font-size: 13px; color: var(--ink); }
+h1, h2, h3 { margin: 0; }
 .hidden { display: none !important; }
-.hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--amber-strong); outline-offset: 2px; }
 
-/* --------------------------------------------------------------------- */
-/* Wordmark                                                               */
-/* --------------------------------------------------------------------- */
+/* Type utilities */
+.lbl {
+  font-size: 11px; line-height: 1.2; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.mono-data {
+  font-family: var(--mono); font-size: 12px; line-height: 1.5;
+  font-weight: 450; font-variant-numeric: tabular-nums;
+}
+.sep { color: var(--faint); }
+.faint { color: var(--faint); }
+.spacer { flex: 1; }
+.hint { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
+
+/* Wordmark — lowercase name + a true circular amber dot */
 .wordmark {
-  font-weight: 650;
-  letter-spacing: -0.022em;
-  font-family: var(--sans);
-  user-select: none;
+  font-weight: 650; letter-spacing: -.022em;
+  color: var(--ink-strong); user-select: none; white-space: nowrap;
 }
-.wordmark .wm-dot { color: var(--accent); }
+.wm-dot {
+  display: inline-block; width: .15em; height: .15em; border-radius: 50%;
+  background: var(--amber); margin-left: .09em;
+}
 
-/* --------------------------------------------------------------------- */
-/* Buttons & form controls                                                */
-/* --------------------------------------------------------------------- */
+/* Brand marks via <use>; symbol fills come from inherited custom props */
+.arch { fill: var(--faint); display: block; margin: 0 auto 12px; }
+
+/* ===================================================================== */
+/* Ink button (the only button) + text links                              */
+/* ===================================================================== */
 .btn {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  padding: 6px 12px;
-  border-radius: var(--radius);
-  transition: background .12s, border-color .12s;
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 28px; padding: 0 14px; border: 0; border-radius: var(--r-btn);
+  background: var(--ink); color: var(--paper);
+  font-size: 13px; font-weight: 500;
+  transition: opacity .12s ease-out;
 }
-.btn:hover { background: var(--surface-2); }
-.btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
-.btn.primary:hover { filter: brightness(1.06); }
-.btn.danger { color: var(--danger); border-color: var(--border); }
-.btn.danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
-.btn.sm { padding: 4px 9px; font-size: 12px; }
-
-.select {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  border-radius: var(--radius);
-  padding: 5px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.select.mini { padding: 3px 6px; font-size: 11px; }
-
-.field { margin-bottom: 14px; }
-.field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.field-head {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;
-}
-.field-head label { margin: 0; }
-.input, textarea.input {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text);
-}
-.input:focus, textarea.input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-textarea.code {
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.6;
-  resize: vertical;
-  white-space: pre;
-  tab-size: 2;
+.btn:hover { opacity: .88; }
+.btn:active { opacity: .8; }
+.btn:disabled { opacity: .4; pointer-events: none; }
+.btn.danger { background: var(--danger); color: #fff; }
+.btn.armed::before {
+  content: ""; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--amber); margin-right: 7px; flex: none;
 }
 
-/* --------------------------------------------------------------------- */
-/* Code editor (transparent textarea over a highlighted backdrop)          */
-/* --------------------------------------------------------------------- */
+.link {
+  display: inline-block; border: 0; background: none;
+  padding: 6px 4px; margin: -6px -4px;
+  font-size: 13px; font-weight: 500; color: var(--muted);
+  text-decoration: none; transition: color .12s ease-out;
+}
+.link:hover {
+  color: var(--ink); text-decoration: underline;
+  text-underline-offset: 3px; text-decoration-color: var(--rule-strong);
+}
+.link.danger:hover { color: var(--danger); }
+.link:disabled { color: var(--faint); pointer-events: none; }
+.link.faint { color: var(--faint); }
+.link.faint:hover { color: var(--muted); }
+.link:focus-visible { border-radius: 2px; }
+
+/* ===================================================================== */
+/* Format switcher — visually-hidden radios + styled text labels          */
+/* ===================================================================== */
+.fmt-group {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 12px; font-weight: 450;
+  font-variant-numeric: tabular-nums;
+}
+.fmt-radio {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+.fmt-opt {
+  color: var(--muted); cursor: pointer; padding: 6px 2px; margin: -6px 0;
+  transition: color .12s ease-out;
+}
+.fmt-opt:hover { color: var(--ink); }
+.fmt-radio:checked + .fmt-opt {
+  color: var(--ink-strong); font-weight: 600;
+  text-decoration: underline; text-underline-offset: 4px;
+  text-decoration-color: var(--rule-strong);
+}
+.fmt-radio:focus-visible + .fmt-opt {
+  outline: 2px solid var(--amber-strong); outline-offset: 2px; border-radius: 2px;
+}
+
+/* ===================================================================== */
+/* Inputs — prose is written on the page; code sits in a tile             */
+/* ===================================================================== */
+.u-input {
+  display: block; width: 100%; border: 0;
+  border-bottom: 1px solid var(--rule-strong);
+  background: transparent; padding: 6px 0;
+  font-size: 14px; border-radius: 0;
+}
+.u-input:focus {
+  outline: none;
+  border-bottom: 2px solid var(--amber-strong); margin-bottom: -1px;
+}
+.u-input::placeholder { color: var(--faint); }
+
+.box-code {
+  display: block; width: 100%;
+  border: 1px solid var(--rule-strong); border-radius: var(--r-btn);
+  background: var(--sheet);
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65; tab-size: 2;
+  padding: 10px 12px; white-space: pre; resize: vertical;
+}
+.box-code:focus { outline: none; border-color: var(--amber-strong); }
+.box-code::placeholder { color: var(--faint); }
+
+/* ===================================================================== */
+/* Code editor (transparent textarea over a highlighted backdrop)         */
+/* ===================================================================== */
 .code-wrap {
-  position: relative;
-  height: 440px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  overflow: hidden;
+  position: relative; height: 360px;
+  border: 1px solid var(--rule-strong); border-radius: var(--r-code);
+  background: var(--sheet); overflow: hidden;
 }
-.code-wrap.focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.code-wrap.cfg { height: max(360px, calc(100dvh - 400px)); }
+.code-wrap.sch { height: max(320px, calc(100dvh - 430px)); }
+.code-wrap.focus { outline: 2px solid var(--amber-strong); outline-offset: -2px; }
 .code-hl, .code-input {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  padding: 10px 12px;
-  border: 0;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.6;
-  tab-size: 2;
-  white-space: pre;
+  position: absolute; inset: 0; margin: 0; padding: 14px 16px; border: 0;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+  tab-size: 2; white-space: pre;
 }
-.code-hl {
-  z-index: 0;
-  overflow: hidden;
-  pointer-events: none;
-  color: var(--text);
-}
+.code-hl { z-index: 0; overflow: hidden; pointer-events: none; color: var(--ink); }
 .code-hl code { font: inherit; }
 .code-input {
-  z-index: 1;
-  overflow: auto;
-  background: transparent;
-  color: transparent;
-  caret-color: var(--text);
-  resize: none;
+  z-index: 1; overflow: auto; background: transparent;
+  color: transparent; caret-color: var(--ink); resize: none;
 }
 .code-input:focus { outline: none; }
-.code-input::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-.tok-key { color: var(--accent); }
+.code-input::selection { background: color-mix(in srgb, var(--amber) 25%, transparent); }
+.tok-key { color: var(--ink); font-weight: 600; }
 .tok-str { color: var(--c-str); }
 .tok-num { color: var(--c-num); }
 .tok-kw  { color: var(--c-kw); }
 .tok-comment { color: var(--muted); font-style: italic; }
 
-/* --------------------------------------------------------------------- */
-/* Connect view                                                           */
-/* --------------------------------------------------------------------- */
+/* ===================================================================== */
+/* Sign-in — the title page. Cardless: elements sit directly on paper.    */
+/* ===================================================================== */
 #connect-view {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  min-height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 24px;
+  padding-bottom: 10vh;
 }
-.connect-card {
-  width: 340px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 28px;
-}
-.connect-card .wordmark { font-size: 26px; }
-.connect-card .sub { color: var(--muted); margin: 2px 0 20px; }
-.connect-error { color: var(--danger); font-size: 12px; margin-top: 8px; min-height: 16px; }
+.signin-mark { width: 56px; height: 56px; display: block; }
+#connect-view .wordmark { font-size: 32px; line-height: 1.15; margin-top: 24px; }
+.signin-sub { font-size: 13px; color: var(--muted); margin: 4px 0 0; }
+.signin-col { width: 320px; max-width: 100%; margin-top: 40px; }
+.signin-col .lbl { display: block; margin-bottom: 6px; }
+.signin-btn { width: 100%; height: 36px; margin-top: 20px; }
+.connect-error { font-size: 13px; color: var(--danger); min-height: 20px; margin-top: 12px; }
+.signin-ver { margin-top: 32px; text-align: center; color: var(--faint); }
 
-/* --------------------------------------------------------------------- */
-/* App layout                                                             */
-/* --------------------------------------------------------------------- */
+/* ===================================================================== */
+/* Shell — one paper surface, regions separated by hairlines              */
+/* ===================================================================== */
 #app-view { height: 100%; display: flex; flex-direction: column; }
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+.masthead {
+  display: flex; align-items: center; gap: 12px;
+  height: 52px; padding: 0 24px; flex: none;
+  border-bottom: 1px solid var(--rule);
 }
-.topbar .wordmark { font-size: 17px; }
-.topbar .ver { color: var(--muted); font-size: 12px; }
-.topbar .spacer { flex: 1; }
-.badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 20px;
-  background: var(--surface-2);
-  color: var(--muted);
-  border: 1px solid var(--border);
-}
-.badge.ro { color: var(--danger); }
+.mast-mark { width: 22px; height: 22px; display: block; }
+.masthead .wordmark { font-size: 16px; }
+.masthead .ver { color: var(--muted); }
+.ro-flag { color: var(--danger); }
 
 .layout { flex: 1; display: flex; min-height: 0; }
-.sidebar {
-  width: 250px;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  display: flex;
-  flex-direction: column;
+.index {
+  width: 248px; flex: none; display: flex; flex-direction: column;
+  border-right: 1px solid var(--rule); overflow-y: auto;
 }
-.sidebar-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
+.index-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 20px 24px 8px; flex: none;
 }
-.sidebar-head h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-.app-list { overflow-y: auto; flex: 1; padding: 6px; }
+.app-list { flex: 1; }
 .app-item {
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  position: relative; display: flex; align-items: center;
+  justify-content: space-between; gap: 8px;
+  width: 100%; height: 36px; padding: 0 24px;
+  border: 0; background: none; text-align: left; font-size: 14px;
 }
-.app-item:hover { background: var(--surface-2); }
-.app-item.active { background: var(--accent); color: var(--accent-fg); }
-.app-item.active .app-rev { color: var(--accent-fg); opacity: .8; }
-.app-item .app-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-rev { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-
-.content { flex: 1; overflow-y: auto; padding: 20px 24px; min-width: 0; }
-.empty-state { color: var(--muted); text-align: center; margin-top: 80px; }
-.history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.history-table th, .history-table td { text-align: left; padding: 8px 10px;
-  border-bottom: 1px solid var(--border); }
-.history-table th { color: var(--muted); font-weight: 500; }
-.history-view { margin-top: 12px; }
-.code-pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-  padding: 12px; font-size: 12px; overflow: auto; max-height: 320px; }
-
-/* App detail */
-.detail-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
-.detail-head h2 { font-size: 18px; }
-.detail-head .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
-.detail-head .spacer { flex: 1; }
-.meta-row { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
-.live-dot {
-  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--muted); margin-right: 5px; vertical-align: middle;
+.app-item:hover { background: var(--hover); }
+.app-item .app-name {
+  font-weight: 500; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: color .12s ease-out;
 }
-.live-dot.on { background: var(--ok); }
+.app-item:hover .app-name { color: var(--ink); }
+.app-item .app-meta {
+  font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums;
+  color: var(--faint); flex: none;
+}
+.app-item.active .app-name { color: var(--ink-strong); font-weight: 600; }
+.app-item.active .app-meta { color: var(--muted); }
+.app-item.active::before {
+  content: ""; position: absolute; left: 12px; top: 50%;
+  transform: translateY(-50%);
+  width: 6px; height: 6px; border-radius: 50%; background: var(--amber);
+}
+.index-empty {
+  text-align: center; margin-top: 24px; padding: 0 16px;
+  color: var(--muted); font-size: 13px;
+}
+.index-empty p { margin: 0 0 8px; }
 
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.content { flex: 1; overflow-y: auto; min-width: 0; }
+#content { max-width: 880px; padding: 40px 48px 96px; }
+.empty-state { text-align: center; margin-top: 96px; color: var(--muted); font-size: 13px; }
+.empty-state p { margin: 0; }
+
+/* ===================================================================== */
+/* App detail header + status line                                        */
+/* ===================================================================== */
+.dh-row { display: flex; align-items: baseline; gap: 12px; }
+.detail-head h1 {
+  font-size: 24px; line-height: 1.2; font-weight: 650;
+  letter-spacing: -.02em; color: var(--ink-strong);
+  overflow-wrap: anywhere;
+}
+.dh-actions { display: flex; align-items: baseline; gap: 8px; flex: none; }
+.desc { margin: 4px 0 0; color: var(--muted); }
+.desc.none { color: var(--faint); font-style: italic; }
+.status-line {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin: 12px 0 0;
+  font-family: var(--mono); font-size: 12px; font-weight: 450;
+  font-variant-numeric: tabular-nums; color: var(--muted);
+}
+.live-seg { display: inline-flex; align-items: center; gap: 6px; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.live-dot.on { background: var(--amber); }
+.live-dot.off {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--muted);
+  animation: recon 1.6s ease-in-out infinite;
+}
+.live-dot.on.pulse { animation: halo .9s ease-out 2; }
+@keyframes halo {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 35%, transparent); }
+  to   { box-shadow: 0 0 0 6px transparent; }
+}
+@keyframes recon { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+
+/* ===================================================================== */
+/* Tabs — running heads on the hairline; the dot is the active marker     */
+/* ===================================================================== */
+.tabs { display: flex; gap: 28px; margin-top: 24px; border-bottom: 1px solid var(--rule); }
 .tab {
-  padding: 7px 14px;
-  border: none;
-  background: none;
-  color: var(--muted);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  position: relative; border: 0; background: none; padding: 8px 0;
+  font-size: 13px; font-weight: 500; color: var(--muted);
+  transition: color .12s ease-out;
 }
-.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+.tab:hover { color: var(--ink); }
+.tab.active { color: var(--ink-strong); font-weight: 600; }
+.tab.active::after {
+  content: ""; position: absolute; left: 50%; bottom: -3px;
+  transform: translateX(-50%);
+  width: 5px; height: 5px; border-radius: 50%; background: var(--amber);
+}
+.tab-dot {
+  display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--amber); margin-left: 6px; vertical-align: 2px;
+}
 
-.editor-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-.editor-toolbar .spacer { flex: 1; }
-.editor-status { font-size: 12px; color: var(--muted); }
-.editor-status.dirty { color: var(--accent); }
+/* ===================================================================== */
+/* Editor toolbar                                                         */
+/* ===================================================================== */
+.toolbar { display: flex; align-items: center; gap: 16px; margin: 16px 0 12px; }
+.ed-status { display: inline-flex; align-items: center; gap: 8px; }
+.ed-status .status-text { color: var(--faint); }
+.ed-status .status-text.dirty { color: var(--muted); }
+.sdot { color: var(--amber); }
 
+/* ===================================================================== */
+/* Notices — editorial rules, not boxes                                   */
+/* ===================================================================== */
 .notice {
-  padding: 8px 12px;
-  border-radius: var(--radius);
-  font-size: 12.5px;
-  margin-bottom: 10px;
-  border: 1px solid var(--border);
+  border-left: 2px solid var(--rule-strong);
+  padding: 6px 14px; margin-bottom: 12px;
+  font-size: 13px; color: var(--ink);
 }
-.notice.error { color: var(--danger); border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
-.notice.ok { color: var(--ok); border-color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); }
-.notice.warn { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.notice ul { margin: 4px 0 0; padding-left: 18px; }
-.notice .notice-actions { margin-top: 6px; display: flex; gap: 8px; }
+.notice.error {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+.notice.warn {
+  border-left-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 6%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+.notice ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
+.notice .link { margin-left: 4px; }
 
-/* --------------------------------------------------------------------- */
+/* ===================================================================== */
+/* History — a typeset table                                              */
+/* ===================================================================== */
+.history-wrap { overflow-x: auto; }
+.history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.history-table th {
+  text-align: left; padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--rule-strong);
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.history-table td {
+  text-align: left; padding: 10px 12px 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.history-table tbody tr:hover { background: var(--hover); }
+.history-table tbody tr.snap-row:hover { background: none; }
+.cur-dot {
+  display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--amber); margin-left: 6px; vertical-align: 1px;
+}
+.cur-txt { color: var(--muted); }
+.schema-col { color: var(--muted); }
+.row-actions { text-align: right; white-space: nowrap; }
+.row-actions .link + .link { margin-left: 16px; }
+.snap-row td { padding: 8px 0 16px; }
+.snap-head { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+.snap-pre {
+  margin: 0; background: var(--sheet);
+  border: 1px solid var(--rule); border-radius: var(--r-code);
+  padding: 12px 14px; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.65; overflow: auto; max-height: 320px;
+}
+.hist-empty { color: var(--muted); font-size: 13px; }
+
+/* ===================================================================== */
 /* Modal                                                                  */
-/* --------------------------------------------------------------------- */
+/* ===================================================================== */
 #modal-overlay {
-  position: fixed; inset: 0;
-  z-index: 1000;
-  background: rgba(0,0,0,.4);
-  display: flex; align-items: center; justify-content: center;
-  padding: 20px;
+  position: fixed; inset: 0; z-index: 1000;
+  background: var(--scrim); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  animation: fadein .16s ease-out;
 }
 .modal {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  width: 440px;
-  max-width: 100%;
-  max-height: 90vh;
-  overflow-y: auto;
-  padding: 22px;
+  background: var(--sheet);
+  border: 1px solid var(--rule); border-radius: var(--r-modal);
+  width: 440px; max-width: calc(100vw - 40px);
+  max-height: 90vh; overflow-y: auto; padding: 24px;
+  box-shadow: var(--shadow);
+  animation: sheetin .18s ease-out;
 }
-.modal h3 { margin-bottom: 16px; font-size: 16px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.modal-error { color: var(--danger); font-size: 12px; min-height: 16px; margin-top: 4px; }
+.modal h3 {
+  font-size: 18px; line-height: 1.3; font-weight: 650;
+  letter-spacing: -.015em; color: var(--ink-strong); margin-bottom: 20px;
+}
+@keyframes fadein { from { opacity: 0; } }
+@keyframes sheetin { from { opacity: 0; transform: scale(.985); } }
+.field { margin-bottom: 16px; }
+.field > .lbl { display: block; margin-bottom: 6px; }
+.field-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.field-head .lbl { margin-bottom: 0; }
+.field-hint { font-size: 12px; color: var(--faint); margin: 6px 0 0; }
+.opt { color: var(--faint); }
+.modal-error { font-size: 13px; color: var(--danger); min-height: 18px; margin-top: 4px; }
+.modal-actions {
+  display: flex; justify-content: flex-end; align-items: center;
+  gap: 16px; margin-top: 24px;
+}
 
-/* --------------------------------------------------------------------- */
+/* ===================================================================== */
 /* Toast                                                                  */
-/* --------------------------------------------------------------------- */
+/* ===================================================================== */
 #toast {
-  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  background: var(--text); color: var(--bg);
-  padding: 9px 16px; border-radius: var(--radius); font-size: 13px;
-  opacity: 0; transition: opacity .2s; pointer-events: none;
+  position: fixed; bottom: 24px; left: 50%; z-index: 1100;
+  transform: translateX(-50%) translateY(6px);
+  background: var(--ink); color: var(--paper);
+  padding: 10px 18px; border-radius: 8px; font-size: 13px;
+  box-shadow: var(--shadow);
+  opacity: 0; transition: opacity .2s, transform .2s;
+  pointer-events: none;
 }
-#toast.show { opacity: 1; }
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ===================================================================== */
+/* Responsive                                                             */
+/* ===================================================================== */
+@media (max-width: 879px) {
+  .layout { flex-direction: column; }
+  .index {
+    width: 100%; height: 44px; flex: none;
+    flex-direction: row; align-items: stretch;
+    border-right: 0; border-bottom: 1px solid var(--rule);
+    overflow-y: hidden; overflow-x: auto;
+  }
+  .index-head {
+    order: 2; margin-left: auto; padding: 0 16px;
+    align-items: center; flex: none;
+  }
+  .index-head .lbl { display: none; }
+  .app-list { order: 1; display: flex; align-items: stretch; flex: none; }
+  .app-item { width: auto; height: auto; padding: 0 14px; }
+  .app-item .app-meta { display: none; }
+  .app-item.active::before { left: 3px; }
+  .index-empty { margin: 0; display: flex; align-items: center; gap: 8px; padding: 0 16px; }
+  .index-empty .arch { display: none; }
+  .index-empty p { margin: 0; }
+  #content { padding: 24px 20px 64px; }
+}
+@media (max-width: 559px) {
+  .masthead .ver { display: none; }
+  .dh-row { flex-wrap: wrap; }
+  .toolbar { flex-wrap: wrap; row-gap: 12px; }
+  .code-wrap.cfg, .code-wrap.sch { height: max(320px, calc(100dvh - 430px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
 </style>
 </head>
 <body>
 
-<!-- ===================== Connect view ===================== -->
+<!-- Brand symbols: the mark, and the dotless arch for empty states -->
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <symbol id="nacho-mark" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="116" fill="var(--mk-tile)"/>
+    <path d="M 118 388 L 118 234 A 92 92 0 0 1 302 234 L 302 388 L 244 388 L 244 234 A 34 34 0 0 0 176 234 L 176 388 Z" fill="var(--mk-n)"/>
+    <circle cx="372" cy="342" r="46" fill="var(--mk-dot)"/>
+  </symbol>
+  <symbol id="nacho-arch" viewBox="0 0 512 512">
+    <path d="M 118 388 L 118 234 A 92 92 0 0 1 302 234 L 302 388 L 244 388 L 244 234 A 34 34 0 0 0 176 234 L 176 388 Z"/>
+  </symbol>
+</svg>
+
+<!-- ===================== Sign-in ("the title page") ===================== -->
 <div id="connect-view">
-  <div class="connect-card">
-    <div class="wordmark">Nacho<span class="wm-dot">.</span></div>
-    <div class="sub">Configuration Manager</div>
-    <div class="field">
-      <label for="key-input">API key</label>
-      <input id="key-input" class="input" type="password" placeholder="Enter API key" autocomplete="off" />
-    </div>
-    <button id="connect-btn" class="btn primary" style="width:100%">Connect</button>
+  <svg class="signin-mark" aria-hidden="true"><use href="#nacho-mark"/></svg>
+  <div class="wordmark">nacho<span class="wm-dot"></span></div>
+  <p class="signin-sub">Schema-first configuration.</p>
+  <div class="signin-col">
+    <label class="lbl" for="key-input">API key</label>
+    <input id="key-input" class="u-input" type="password" autocomplete="off" autofocus />
+    <button id="connect-btn" class="btn signin-btn">Sign in</button>
     <div id="connect-error" class="connect-error"></div>
+    <div class="signin-ver mono-data" id="signin-ver"></div>
   </div>
 </div>
 
 <!-- ===================== App view ===================== -->
 <div id="app-view" class="hidden">
-  <div class="topbar">
-    <span class="wordmark">Nacho<span class="wm-dot">.</span></span>
-    <span class="ver" id="server-ver"></span>
-    <span class="badge ro hidden" id="ro-badge">read-only</span>
+  <header class="masthead">
+    <svg class="mast-mark" aria-hidden="true"><use href="#nacho-mark"/></svg>
+    <span class="wordmark">nacho<span class="wm-dot"></span></span>
+    <span class="ver mono-data" id="server-ver"></span>
     <span class="spacer"></span>
-    <button class="btn sm" id="disconnect-btn">Disconnect</button>
-  </div>
+    <span class="ro-flag lbl hidden" id="ro-badge">Read-only</span>
+    <button class="link" id="disconnect-btn">Sign out</button>
+  </header>
   <div class="layout">
-    <aside class="sidebar">
-      <div class="sidebar-head">
-        <h3>Apps</h3>
-        <button class="btn sm primary" id="new-app-btn">+ New</button>
+    <aside class="index">
+      <div class="index-head">
+        <span class="lbl">Apps</span>
+        <button class="link" id="new-app-btn">+ New</button>
       </div>
       <div class="app-list" id="app-list"></div>
     </aside>
-    <main class="content" id="content">
-      <div class="empty-state">Select an app, or create one to get started.</div>
+    <main class="content">
+      <div id="content"></div>
     </main>
   </div>
 </div>
 
 <div id="modal-overlay" class="hidden"></div>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
 "use strict";
@@ -406,9 +589,13 @@ const state = {
   schema: null,      // server-truth schema object or null
   schemaFormat: localStorage.getItem("nacho_schema_format") || "json",
   schemaPristine: "",
+  // Editor buffers survive tab switches: on leaving a dirty editor tab the
+  // text is stashed here and restored on re-entry (null = no draft).
+  drafts: { config: null, schema: null },
   ws: null,
   wsRetry: null,
   activeTab: "config",
+  openSnapshot: null, // revision expanded inline in the history table
 };
 let configEd = null;  // code editor for the config tab
 let schemaEd = null;  // code editor for the schema tab
@@ -416,9 +603,11 @@ let schemaEd = null;  // code editor for the schema tab
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const fmtOptions = (sel) =>
-  FORMATS.map((f) => '<option value="' + f + '"' + (f === sel ? " selected" : "") +
-    ">" + f.toUpperCase() + "</option>").join("");
+
+const EMPTY_MAIN =
+  '<div class="empty-state">' +
+  '<svg class="arch" width="40" height="40" aria-hidden="true"><use href="#nacho-arch"/></svg>' +
+  "<p>Select an app from the index, or create one.</p></div>";
 
 /* ===================================================================== */
 /* HTTP helper                                                            */
@@ -500,6 +689,26 @@ function toast(msg) {
 }
 
 /* ===================================================================== */
+/* Notices — editorial rule-notices; success auto-dismisses after 4s      */
+/* ===================================================================== */
+function notice(kind, html) {
+  const role = kind === "error" ? ' role="alert"' : "";
+  return '<div class="notice ' + kind + '"' + role + ">" + html + "</div>";
+}
+const noticeTimers = {};
+function slotNotice(id, html, autoDismiss) {
+  const n = $(id);
+  if (!n) return;
+  clearTimeout(noticeTimers[id]);
+  n.innerHTML = html || "";
+  if (autoDismiss && html) {
+    noticeTimers[id] = setTimeout(() => { if (n.isConnected) n.innerHTML = ""; }, 4000);
+  }
+}
+function configNotice(html, autoDismiss) { slotNotice("config-notice", html, autoDismiss); }
+function schemaNotice(html, autoDismiss) { slotNotice("schema-notice", html, autoDismiss); }
+
+/* ===================================================================== */
 /* Syntax highlighting — json / yaml / toml                                */
 /* ===================================================================== */
 function escHtml(s) {
@@ -569,7 +778,7 @@ function mountCodeEditor(host, opts) {
   opts = opts || {};
   let lang = opts.language || "json";
   const wrap = document.createElement("div");
-  wrap.className = "code-wrap";
+  wrap.className = "code-wrap" + (opts.variant ? " " + opts.variant : "");
   const pre = document.createElement("pre");
   pre.className = "code-hl";
   pre.setAttribute("aria-hidden", "true");
@@ -580,6 +789,7 @@ function mountCodeEditor(host, opts) {
   ta.spellcheck = false;
   ta.autocapitalize = "off";
   ta.setAttribute("autocomplete", "off");
+  if (opts.ariaLabel) ta.setAttribute("aria-label", opts.ariaLabel);
   if (opts.readOnly) ta.readOnly = true;
   wrap.append(pre, ta);
   host.appendChild(wrap);
@@ -595,6 +805,12 @@ function mountCodeEditor(host, opts) {
   ta.addEventListener("focus", () => wrap.classList.add("focus"));
   ta.addEventListener("blur", () => wrap.classList.remove("focus"));
   ta.addEventListener("keydown", (e) => {
+    // Cmd/Ctrl+S saves — scoped to the editor textarea, never global.
+    if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) {
+      e.preventDefault();
+      if (opts.onSave) opts.onSave();
+      return;
+    }
     if (e.key !== "Tab") return;
     e.preventDefault();
     ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end");
@@ -614,6 +830,29 @@ function mountCodeEditor(host, opts) {
 }
 
 /* ===================================================================== */
+/* Format switcher — visually-hidden radios + styled labels                */
+/* ===================================================================== */
+function fmtSwitcher(prefix, sel) {
+  let html = '<span class="fmt-group" role="radiogroup" aria-label="Editor format">';
+  FORMATS.forEach((f, i) => {
+    if (i) html += '<span class="sep">·</span>';
+    html += '<input type="radio" class="fmt-radio" name="' + prefix + '" id="' +
+      prefix + "-" + f + '" value="' + f + '"' + (f === sel ? " checked" : "") + ">" +
+      '<label class="fmt-opt" for="' + prefix + "-" + f + '">' + f.toUpperCase() + "</label>";
+  });
+  return html + "</span>";
+}
+function bindFmtSwitcher(prefix, handler) {
+  document.querySelectorAll('input[name="' + prefix + '"]').forEach((r) => {
+    r.onchange = () => handler(r.value);
+  });
+}
+function setFmtSwitcher(prefix, fmt) {
+  const r = $(prefix + "-" + fmt);
+  if (r) r.checked = true;
+}
+
+/* ===================================================================== */
 /* Connect flow                                                           */
 /* ===================================================================== */
 async function boot() {
@@ -624,7 +863,9 @@ async function boot() {
   } catch (_) { /* server may still be coming up */ }
   state.authRequired = health.auth_required !== false;
   state.readOnly = !!health.read_only;
-  $("server-ver").textContent = health.version ? "v" + health.version : "";
+  const ver = health.version ? "v" + health.version : "";
+  $("server-ver").textContent = ver;
+  $("signin-ver").textContent = ver;
 
   if (!state.authRequired) { state.apiKey = ""; await enterApp(); return; }
   if (state.apiKey && (await tryConnect())) return;
@@ -651,15 +892,21 @@ async function tryConnect() {
 }
 
 $("connect-btn").onclick = async () => {
+  const btn = $("connect-btn");
   const key = $("key-input").value.trim();
   $("connect-error").textContent = "";
   if (!key) { $("connect-error").textContent = "API key is required."; return; }
-  state.apiKey = key;
-  setAuthCookie(key);
-  if (await tryConnect()) {
-    localStorage.setItem("nacho_api_key", key);
-  } else if (!$("connect-error").textContent) {
-    $("connect-error").textContent = "Invalid API key.";
+  btn.disabled = true;
+  try {
+    state.apiKey = key;
+    setAuthCookie(key);
+    if (await tryConnect()) {
+      localStorage.setItem("nacho_api_key", key);
+    } else if (!$("connect-error").textContent) {
+      $("connect-error").textContent = "Invalid API key.";
+    }
+  } finally {
+    btn.disabled = false;
   }
 };
 $("key-input").addEventListener("keydown", (e) => {
@@ -667,10 +914,12 @@ $("key-input").addEventListener("keydown", (e) => {
 });
 
 $("disconnect-btn").onclick = () => {
+  if (!confirmDiscard()) return;
   closeWs();
   clearInterval(state.appsPoll);
   state.apiKey = "";
   state.selected = null;
+  clearDrafts();
   localStorage.removeItem("nacho_api_key");
   clearAuthCookie();
   showConnect();
@@ -681,18 +930,19 @@ async function enterApp() {
   $("connect-view").classList.add("hidden");
   $("app-view").classList.remove("hidden");
   $("ro-badge").classList.toggle("hidden", !state.readOnly);
+  if (!state.selected) $("content").innerHTML = EMPTY_MAIN;
   try {
     await refreshApps();
   } catch (err) {
-    $("app-list").innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
+    $("app-list").innerHTML = notice("error", esc(errText(err)));
   }
-  // Keep the sidebar (revisions, other apps) reasonably fresh.
+  // Keep the index (revisions, other apps) reasonably fresh.
   clearInterval(state.appsPoll);
   state.appsPoll = setInterval(() => refreshApps().catch(() => {}), 30000);
 }
 
 /* ===================================================================== */
-/* App list                                                               */
+/* App index                                                              */
 /* ===================================================================== */
 async function refreshApps() {
   const { data } = await api("GET", "/api/apps");
@@ -700,9 +950,9 @@ async function refreshApps() {
   if (state.selected && !state.apps[state.selected]) {
     // The selected app was deleted or renamed elsewhere — drop the stale pane.
     state.selected = null;
+    clearDrafts();
     closeWs();
-    $("content").innerHTML =
-      '<div class="empty-state">Select an app, or create one to get started.</div>';
+    $("content").innerHTML = EMPTY_MAIN;
   }
   renderAppList();
 }
@@ -711,27 +961,43 @@ function renderAppList() {
   const list = $("app-list");
   const names = Object.keys(state.apps).sort();
   if (!names.length) {
-    list.innerHTML = '<div class="empty-state" style="margin-top:24px">No apps yet.</div>';
+    list.innerHTML = '<div class="index-empty">' +
+      '<svg class="arch" width="24" height="24" aria-hidden="true"><use href="#nacho-arch"/></svg>' +
+      "<p>No apps yet.</p>" +
+      '<button class="link" id="first-app-btn">Create the first app</button></div>';
+    $("first-app-btn").onclick = openNewAppModal;
     return;
   }
   list.innerHTML = "";
   for (const name of names) {
     const info = state.apps[name];
-    const div = document.createElement("div");
-    div.className = "app-item" + (name === state.selected ? " active" : "");
-    div.innerHTML = '<span class="app-name">' + esc(name) + "</span>" +
-      '<span class="app-rev">r' + esc(info.revision) + "</span>";
-    div.onclick = () => selectApp(name);
-    list.appendChild(div);
+    const conn = info.connections || 0;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "app-item" + (name === state.selected ? " active" : "");
+    btn.title = conn === 1 ? "1 connected client" : conn + " connected clients";
+    // The connection count is omitted at zero — absence is the quiet state.
+    btn.innerHTML = '<span class="app-name">' + esc(name) + "</span>" +
+      '<span class="app-meta">' + (conn ? esc(conn) + " · " : "") +
+      "r" + esc(info.revision) + "</span>";
+    btn.onclick = () => selectApp(name);
+    list.appendChild(btn);
   }
 }
 
 /* ===================================================================== */
 /* App detail                                                             */
 /* ===================================================================== */
+function clearDrafts() {
+  state.drafts = { config: null, schema: null };
+  configEd = null;
+  schemaEd = null;
+}
+
 async function selectApp(name) {
   if (state.selected === name) return;
   if (!confirmDiscard()) return;
+  clearDrafts();
   state.selected = name;
   renderAppList();
   await loadAppDetail(name);
@@ -747,11 +1013,13 @@ async function loadAppDetail(name) {
     const sch = await api("GET", "/api/apps/" + encodeURIComponent(name) + "/schema");
     schemaObj = sch.data.data;
   } catch (err) {
-    $("content").innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
+    $("content").innerHTML = notice("error", esc(errText(err)));
     return;
   }
   state.configObj = configObj;
   state.schema = schemaObj;
+  // A full (re)load is always adopt-server-truth: drafts do not survive it.
+  clearDrafts();
 
   const cfg = await serializeSafe(configObj, state.configFormat, "configuration");
   state.configFormat = cfg.fmt;
@@ -770,36 +1038,56 @@ async function loadAppDetail(name) {
 function renderDetail() {
   const name = state.selected;
   const info = state.apps[name] || {};
+  const wsOn = !!(state.ws && state.ws.readyState === 1);
   const c = $("content");
   c.innerHTML = `
-    <div class="detail-head">
-      <div>
-        <h2>${esc(name)}</h2>
-        <div class="desc">${esc(info.description || "No description")}</div>
-        <div class="meta-row">
-          <span><span class="live-dot" id="live-dot"></span><span id="live-label">offline</span></span>
-          <span>revision <b id="rev-label">${esc(state.revision)}</b></span>
-          <span>${esc(info.connections || 0)} watcher(s)</span>
-          <span>schema: <b id="schema-flag">${state.schema ? "yes" : "none"}</b></span>
-        </div>
+    <header class="detail-head">
+      <div class="dh-row">
+        <h1>${esc(name)}</h1>
+        <span class="spacer"></span>
+        <span class="dh-actions">
+          <button class="link" id="meta-btn">Edit</button>
+          <span class="sep">·</span>
+          <button class="link danger" id="delete-btn">Delete</button>
+        </span>
       </div>
-      <span class="spacer"></span>
-      <button class="btn sm" id="meta-btn">Edit</button>
-      <button class="btn sm danger" id="delete-btn">Delete</button>
+      <p class="desc${info.description ? "" : " none"}">${esc(info.description || "No description")}</p>
+      <p class="status-line">
+        <span class="live-seg"><span class="live-dot ${wsOn ? "on" : "off"}" id="live-dot"></span><span id="live-label">${wsOn ? "live" : "offline"}</span></span>
+        <span class="sep">·</span>
+        <span>r<span id="rev-label">${esc(state.revision)}</span></span>
+        <span class="sep">·</span>
+        <span>${esc(info.connections || 0)} watching</span>
+        <span class="sep">·</span>
+        <span id="schema-flag" class="${state.schema ? "" : "faint"}">${state.schema ? "schema ✓" : "no schema"}</span>
+      </p>
+    </header>
+    <div class="tabs" role="tablist" aria-label="App sections">
+      <button class="tab" role="tab" aria-selected="false" data-tab="config">Configuration<span class="tab-dot" role="img" aria-label="unsaved changes" hidden></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="schema">Schema<span class="tab-dot" role="img" aria-label="unsaved changes" hidden></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="history">History</button>
     </div>
-    <div class="tabs">
-      <button class="tab" data-tab="config">Configuration</button>
-      <button class="tab" data-tab="schema">Schema</button>
-      <button class="tab" data-tab="history">History</button>
-    </div>
-    <div id="tab-body"></div>
+    <div id="tab-body" role="tabpanel"></div>
   `;
+  $("live-dot").addEventListener("animationend", () => $("live-dot").classList.remove("pulse"));
   $("meta-btn").onclick = openMetaModal;
   $("delete-btn").onclick = deleteApp;
-  c.querySelectorAll(".tab").forEach((t) => {
+  const tabs = Array.from(c.querySelectorAll(".tab"));
+  tabs.forEach((t, i) => {
     t.onclick = () => switchTab(t.dataset.tab);
+    t.onkeydown = (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length].focus();
+    };
   });
   switchTab(state.activeTab, true);
+}
+
+/* Stash a dirty editor's buffer before its tab is torn down. */
+function stashDrafts() {
+  if (configEd) state.drafts.config = isConfigDirty() ? configEd.value : null;
+  if (schemaEd) state.drafts.schema = isSchemaDirty() ? schemaEd.value : null;
 }
 
 function switchTab(tab, force) {
@@ -807,45 +1095,60 @@ function switchTab(tab, force) {
   // that would silently discard unsaved edits. `force` is used after a full
   // detail re-render, when the tab body is empty and must be rebuilt.
   if (!force && tab === state.activeTab) return;
-  if (tab !== state.activeTab && !confirmDiscard()) return;
+  // Tab switches never prompt: dirty buffers are preserved as drafts and
+  // restored on re-entry. Discard only happens on app switch / Discard /
+  // Load-server-version / sign-out.
+  stashDrafts();
   state.activeTab = tab;
   configEd = null;
   schemaEd = null;
   document.querySelectorAll(".tab").forEach((t) => {
-    t.classList.toggle("active", t.dataset.tab === tab);
+    const on = t.dataset.tab === tab;
+    t.classList.toggle("active", on);
+    t.setAttribute("aria-selected", on ? "true" : "false");
   });
   if (tab === "config") renderConfigTab();
   else if (tab === "history") renderHistoryTab();
   else renderSchemaTab();
+  updateTabDots();
 }
 
 /* ----- Configuration tab ----- */
 function renderConfigTab(text) {
-  const ro = state.readOnly ? "disabled" : "";
   $("tab-body").innerHTML = `
     <div id="config-notice"></div>
-    <div class="editor-toolbar">
-      <select class="select" id="config-format" title="Editor format">${fmtOptions(state.configFormat)}</select>
-      <button class="btn sm" id="format-btn">Format</button>
-      <button class="btn sm" id="validate-btn">Validate</button>
-      <button class="btn sm" id="reload-btn">Reload</button>
+    <div class="toolbar">
+      ${fmtSwitcher("cfg-fmt", state.configFormat)}
+      <button class="link" id="format-btn">Tidy</button>
+      <button class="link" id="validate-btn">Validate</button>
       <span class="spacer"></span>
-      <span class="editor-status" id="editor-status"></span>
-      <button class="btn sm primary" id="save-btn" ${ro}>Save</button>
+      <span class="ed-status mono-data">
+        <span class="status-text" id="editor-status"></span>
+        <span class="sep" id="editor-aux-sep">·</span>
+        <button class="link faint" id="refresh-link">refresh</button>
+        <button class="link" id="discard-link" hidden>Discard</button>
+      </span>
+      ${state.readOnly ? "" : '<button class="btn" id="save-btn">Save</button>'}
     </div>
     <div id="config-host"></div>
   `;
   configEd = mountCodeEditor($("config-host"), {
-    value: text !== undefined ? text : state.pristine,
+    value: text !== undefined ? text :
+      (state.drafts.config != null ? state.drafts.config : state.pristine),
     language: state.configFormat,
     readOnly: state.readOnly,
+    variant: "cfg",
+    ariaLabel: "Configuration editor",
     onInput: updateDirty,
+    onSave: () => { if (!state.readOnly && isConfigDirty()) saveConfig(); },
   });
-  $("config-format").onchange = (e) => changeConfigFormat(e.target.value);
+  bindFmtSwitcher("cfg-fmt", changeConfigFormat);
   $("format-btn").onclick = formatConfig;
   $("validate-btn").onclick = validateConfig;
-  $("reload-btn").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
-  $("save-btn").onclick = saveConfig;
+  $("refresh-link").onclick = () => loadAppDetail(state.selected);
+  $("discard-link").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
+  const save = $("save-btn");
+  if (save) save.onclick = saveConfig;
   updateDirty();
 }
 
@@ -857,9 +1160,9 @@ async function changeConfigFormat(fmt) {
       editorText = await convertFormat(configEd.value, state.configFormat, fmt);
     pristineText = await serialize(state.configObj, fmt);
   } catch (e) {
-    configNotice('<div class="notice error">Cannot convert to ' + fmt.toUpperCase() +
-      ": " + esc(errText(e)) + "</div>");
-    $("config-format").value = state.configFormat;
+    configNotice(notice("error", "<strong>Cannot convert to " + fmt.toUpperCase() +
+      ".</strong> " + esc(errText(e))));
+    setFmtSwitcher("cfg-fmt", state.configFormat);
     return;
   }
   state.configFormat = fmt;
@@ -870,31 +1173,42 @@ async function changeConfigFormat(fmt) {
 
 /* ----- Schema tab ----- */
 function renderSchemaTab(text) {
-  const ro = state.readOnly ? "disabled" : "";
   $("tab-body").innerHTML = `
     <div id="schema-notice"></div>
-    <div class="editor-toolbar">
-      <select class="select" id="schema-format" title="Editor format">${fmtOptions(state.schemaFormat)}</select>
-      <button class="btn sm" id="schema-format-btn">Format</button>
-      <button class="btn sm" id="schema-clear-btn" ${ro}>Clear schema</button>
+    <div class="toolbar">
+      ${fmtSwitcher("sch-fmt", state.schemaFormat)}
+      <button class="link" id="schema-format-btn">Tidy</button>
+      <button class="link danger" id="schema-clear-btn"${state.readOnly ? " disabled" : ""}>Clear</button>
       <span class="spacer"></span>
-      <span class="editor-status" id="schema-status"></span>
-      <button class="btn sm primary" id="schema-save-btn" ${ro}>Save schema</button>
+      <span class="ed-status mono-data">
+        <span class="status-text" id="schema-status"></span>
+        <span class="sep" id="schema-aux-sep">·</span>
+        <button class="link faint" id="schema-refresh-link">refresh</button>
+        <button class="link" id="schema-discard-link" hidden>Discard</button>
+      </span>
+      ${state.readOnly ? "" : '<button class="btn" id="schema-save-btn">Save schema</button>'}
     </div>
     <div id="schema-host"></div>
     <p class="hint">A JSON Schema validates every config write. An empty editor
-      clears the schema. Saving re-checks the current configuration against it.</p>
+      clears the schema.</p>
   `;
   schemaEd = mountCodeEditor($("schema-host"), {
-    value: text !== undefined ? text : state.schemaPristine,
+    value: text !== undefined ? text :
+      (state.drafts.schema != null ? state.drafts.schema : state.schemaPristine),
     language: state.schemaFormat,
     readOnly: state.readOnly,
+    variant: "sch",
+    ariaLabel: "Schema editor",
     onInput: updateSchemaDirty,
+    onSave: () => { if (!state.readOnly && isSchemaDirty()) saveSchema(); },
   });
-  $("schema-format").onchange = (e) => changeSchemaFormat(e.target.value);
+  bindFmtSwitcher("sch-fmt", changeSchemaFormat);
   $("schema-format-btn").onclick = formatSchema;
   $("schema-clear-btn").onclick = () => { schemaEd.value = ""; updateSchemaDirty(); };
-  $("schema-save-btn").onclick = saveSchema;
+  $("schema-refresh-link").onclick = () => loadAppDetail(state.selected);
+  $("schema-discard-link").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
+  const save = $("schema-save-btn");
+  if (save) save.onclick = saveSchema;
   updateSchemaDirty();
 }
 
@@ -906,9 +1220,9 @@ async function changeSchemaFormat(fmt) {
       editorText = await convertFormat(schemaEd.value, state.schemaFormat, fmt);
     if (state.schema) pristineText = await serialize(state.schema, fmt);
   } catch (e) {
-    schemaNotice('<div class="notice error">Cannot convert to ' + fmt.toUpperCase() +
-      ": " + esc(errText(e)) + "</div>");
-    $("schema-format").value = state.schemaFormat;
+    schemaNotice(notice("error", "<strong>Cannot convert to " + fmt.toUpperCase() +
+      ".</strong> " + esc(errText(e))));
+    setFmtSwitcher("sch-fmt", state.schemaFormat);
     return;
   }
   state.schemaFormat = fmt;
@@ -919,94 +1233,152 @@ async function changeSchemaFormat(fmt) {
 
 /* ----- History tab ----- */
 async function renderHistoryTab() {
+  state.openSnapshot = null;
   $("tab-body").innerHTML = '<div id="history-notice"></div>' +
-    '<div id="history-body" class="hint">Loading history\u2026</div>';
+    '<div id="history-body"><p class="hint">Loading history…</p></div>';
   let entries;
   try {
     const res = await api("GET",
       "/api/apps/" + encodeURIComponent(state.selected) + "/history");
     entries = res.data.data || [];
   } catch (err) {
-    $("history-body").innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
+    $("history-body").innerHTML = notice("error", esc(errText(err)));
     return;
   }
   if (!entries.length) {
-    $("history-body").innerHTML =
-      '<div class="empty-state" style="margin-top:24px">No history recorded yet.</div>';
+    $("history-body").innerHTML = '<p class="hist-empty">No history recorded yet.</p>';
     return;
   }
   const rows = entries.map((e) => {
     const current = e.revision === state.revision;
     return "<tr>" +
-      "<td>r" + esc(e.revision) + (current ? " (current)" : "") + "</td>" +
-      "<td>" + esc(e.updated_at || "") + "</td>" +
-      "<td>" + esc(e.config_count) + "</td>" +
-      "<td>" + (e.schema ? "yes" : "no") + "</td>" +
-      '<td><button class="btn sm" data-view="' + e.revision + '">View</button> ' +
-      '<button class="btn sm" data-restore="' + e.revision + '"' +
+      '<td class="mono-data">r' + esc(e.revision) +
+      (current ? '<span class="cur-dot" role="img" aria-label="current"></span><span class="cur-txt"> (current)</span>' : "") +
+      "</td>" +
+      '<td class="mono-data">' + esc(e.updated_at || "") + "</td>" +
+      '<td class="mono-data">' + esc(e.config_count) + "</td>" +
+      '<td class="schema-col">' + (e.schema ? "✓" : '<span class="faint">—</span>') + "</td>" +
+      '<td class="row-actions"><button class="link" data-view="' + e.revision + '">View</button>' +
+      '<button class="link" data-restore="' + e.revision + '"' +
       (current || state.readOnly ? " disabled" : "") + ">Restore</button></td>" +
       "</tr>";
   }).join("");
   $("history-body").innerHTML =
-    '<table class="history-table"><thead><tr>' +
+    '<div class="history-wrap"><table class="history-table"><thead><tr>' +
     "<th>Revision</th><th>Updated</th><th>Keys</th><th>Schema</th><th></th>" +
-    "</tr></thead><tbody>" + rows + "</tbody></table>" +
-    '<div class="history-view" id="history-view"></div>' +
-    '<p class="hint">Restoring creates a new revision with the snapshot\u2019s ' +
-    "config and schema \u2014 history is never rewritten, so a rollback can " +
-    "itself be rolled back.</p>";
+    "</tr></thead><tbody>" + rows + "</tbody></table></div>";
   $("history-body").querySelectorAll("[data-view]").forEach((b) => {
-    b.onclick = () => viewHistorySnapshot(parseInt(b.dataset.view, 10));
+    b.onclick = () => toggleHistorySnapshot(parseInt(b.dataset.view, 10), b.closest("tr"));
   });
   $("history-body").querySelectorAll("[data-restore]").forEach((b) => {
     b.onclick = () => restoreHistorySnapshot(parseInt(b.dataset.restore, 10));
   });
 }
 
-async function viewHistorySnapshot(revision) {
-  const view = $("history-view");
+/* The snapshot expands inline directly under its row. */
+async function toggleHistorySnapshot(revision, tr) {
+  const existing = document.querySelector(".snap-row");
+  const wasOpen = state.openSnapshot === revision;
+  if (existing) existing.remove();
+  state.openSnapshot = null;
+  if (wasOpen) return;
+  const row = document.createElement("tr");
+  row.className = "snap-row";
+  const td = document.createElement("td");
+  td.colSpan = 5;
+  td.innerHTML = '<p class="snap-head">r' + esc(revision) + ' — loading…</p>';
+  row.appendChild(td);
+  tr.after(row);
+  state.openSnapshot = revision;
   try {
     const res = await api("GET", "/api/apps/" +
       encodeURIComponent(state.selected) + "/history/" + revision);
     const snap = res.data.data;
-    view.innerHTML = "<h3>Revision " + esc(revision) + "</h3>" +
-      "<pre class=\"code-pre\">" +
-      esc(JSON.stringify({ config: snap.config, schema: snap.schema }, null, 2)) +
-      "</pre>";
+    if (state.openSnapshot !== revision || !row.isConnected) return;
+    td.innerHTML = '<p class="snap-head">r' + esc(revision) + " — config + schema</p>" +
+      '<pre class="snap-pre"><code>' +
+      highlightJSON(JSON.stringify({ config: snap.config, schema: snap.schema }, null, 2)) +
+      "</code></pre>";
   } catch (err) {
-    view.innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
+    if (row.isConnected) td.innerHTML = notice("error", esc(errText(err)));
   }
 }
 
 async function restoreHistorySnapshot(revision) {
-  if (!confirm("Restore config and schema from revision " + revision +
-      "? This creates a new revision.")) return;
+  if (anyDirty() && !confirmDiscard()) return;
+  if (!confirm("Restore r" + revision + "? Config and schema from revision " +
+      revision + " become a new revision. History is never rewritten — " +
+      "this rollback can itself be rolled back.")) return;
   try {
     await api("POST",
       "/api/apps/" + encodeURIComponent(state.selected) + "/rollback",
       { revision: revision, expected_revision: state.revision });
-    toast("Rolled back to revision " + revision + ".");
     await refreshApps();
     await loadAppDetail(state.selected);
+    toast("Restored r" + revision + " → now r" + state.revision + ".");
   } catch (err) {
-    $("history-notice").innerHTML =
-      '<div class="notice error">' + esc(errText(err)) + "</div>";
+    slotNotice("history-notice", notice("error", esc(errText(err))));
   }
 }
 
 /* ----- Dirty tracking ----- */
-function isConfigDirty() { return configEd && configEd.value !== state.pristine; }
-function isSchemaDirty() { return schemaEd && schemaEd.value !== state.schemaPristine; }
-function anyDirty() { return isConfigDirty() || isSchemaDirty(); }
+function isConfigDirty() { return !!(configEd && configEd.value !== state.pristine); }
+function isSchemaDirty() { return !!(schemaEd && schemaEd.value !== state.schemaPristine); }
+function configDraftDirty() {
+  return configEd ? isConfigDirty()
+    : state.drafts.config != null && state.drafts.config !== state.pristine;
+}
+function schemaDraftDirty() {
+  return schemaEd ? isSchemaDirty()
+    : state.drafts.schema != null && state.drafts.schema !== state.schemaPristine;
+}
+function anyDirty() { return configDraftDirty() || schemaDraftDirty(); }
 
 function setStatus(id, dirty) {
   const s = $(id);
   if (!s) return;
-  s.textContent = dirty ? "● Unsaved changes" : "Saved";
+  if (state.readOnly) { s.textContent = "read-only"; return; }
+  // The literal strings below are load-bearing (asserted by the UI tests);
+  // the bullet is styled amber via .sdot.
+  if (dirty) s.innerHTML = '<span class="sdot">●</span> Unsaved changes';
+  else s.textContent = "Saved";
   s.classList.toggle("dirty", dirty);
 }
-function updateDirty() { setStatus("editor-status", isConfigDirty()); }
-function updateSchemaDirty() { setStatus("schema-status", isSchemaDirty()); }
+
+/* A tab whose live buffer or stashed draft is dirty shows an amber dot. */
+function updateTabDots() {
+  const dots = {
+    config: configDraftDirty(),
+    schema: schemaDraftDirty(),
+  };
+  for (const tab of ["config", "schema"]) {
+    const el = document.querySelector('.tab[data-tab="' + tab + '"] .tab-dot');
+    if (el) el.hidden = !dots[tab];
+  }
+}
+
+function updateDirty() {
+  const dirty = isConfigDirty();
+  setStatus("editor-status", dirty);
+  const save = $("save-btn");
+  if (save) { save.disabled = !dirty; save.classList.toggle("armed", dirty); }
+  const r = $("refresh-link"), d = $("discard-link"), sep = $("editor-aux-sep");
+  if (r) r.hidden = dirty || state.readOnly;
+  if (d) d.hidden = !dirty || state.readOnly;
+  if (sep) sep.hidden = state.readOnly;
+  updateTabDots();
+}
+function updateSchemaDirty() {
+  const dirty = isSchemaDirty();
+  setStatus("schema-status", dirty);
+  const save = $("schema-save-btn");
+  if (save) { save.disabled = !dirty; save.classList.toggle("armed", dirty); }
+  const r = $("schema-refresh-link"), d = $("schema-discard-link"), sep = $("schema-aux-sep");
+  if (r) r.hidden = dirty || state.readOnly;
+  if (d) d.hidden = !dirty || state.readOnly;
+  if (sep) sep.hidden = state.readOnly;
+  updateTabDots();
+}
 
 function confirmDiscard() {
   if (!anyDirty()) return true;
@@ -1014,8 +1386,6 @@ function confirmDiscard() {
 }
 
 /* ----- Configuration actions ----- */
-function configNotice(html) { const n = $("config-notice"); if (n) n.innerHTML = html || ""; }
-
 async function formatConfig() {
   try {
     if (!configEd.value.trim()) return;
@@ -1023,7 +1393,7 @@ async function formatConfig() {
     updateDirty();
     configNotice("");
   } catch (e) {
-    configNotice('<div class="notice error">' + esc(errText(e)) + "</div>");
+    configNotice(notice("error", "<strong>Invalid.</strong> " + esc(errText(e))));
   }
 }
 
@@ -1033,17 +1403,29 @@ async function validateConfig() {
       "/api/apps/" + encodeURIComponent(state.selected) + "/validate",
       { data: configEd.value, format: state.configFormat });
     if (data.valid) {
-      configNotice('<div class="notice ok">Configuration is valid against the schema.</div>');
+      configNotice(notice("ok", "✓ Valid against the schema."), true);
     } else {
-      configNotice('<div class="notice error">Validation failed:<ul>' +
-        data.errors.map((e) => "<li>" + esc(e) + "</li>").join("") + "</ul></div>");
+      configNotice(notice("error", "<strong>Invalid.</strong><ul>" +
+        data.errors.map((e) => "<li>" + esc(e) + "</li>").join("") + "</ul>"));
     }
   } catch (err) {
-    configNotice('<div class="notice error">' + esc(errText(err)) + "</div>");
+    configNotice(notice("error", "<strong>Invalid.</strong> " + esc(errText(err))));
   }
 }
 
+function conflictNotice(err, reloadId) {
+  const d = err.detail || {};
+  const lead = d.actual != null
+    ? "<strong>Revision conflict</strong> — the server is at r" + esc(d.actual) +
+      ", you saved against r" + esc(d.expected) + "."
+    : "<strong>Revision conflict</strong> — " + esc(errText(err));
+  return notice("warn", lead +
+    ' <button class="link" id="' + reloadId + '">Load latest</button>');
+}
+
 async function saveConfig() {
+  const save = $("save-btn");
+  if (save) save.disabled = true;
   try {
     const { data } = await api("PUT",
       "/api/apps/" + encodeURIComponent(state.selected) + "/config",
@@ -1052,25 +1434,22 @@ async function saveConfig() {
     state.configObj = data.data;
     state.pristine = await serialize(state.configObj, state.configFormat);
     configEd.value = state.pristine;
-    updateDirty();
     configNotice("");
-    toast("Configuration saved (revision " + state.revision + ")");
+    toast("Saved — r" + state.revision + ".");
     await refreshApps();
   } catch (err) {
     if (err.status === 409) {
-      configNotice('<div class="notice warn">' + esc(errText(err)) +
-        '<div class="notice-actions">' +
-        '<button class="btn sm" id="conflict-reload">Reload latest</button></div></div>');
+      configNotice(conflictNotice(err, "conflict-reload"));
       $("conflict-reload").onclick = () => loadAppDetail(state.selected);
     } else {
-      configNotice('<div class="notice error">' + esc(errText(err)) + "</div>");
+      configNotice(notice("error", "<strong>Invalid.</strong> " + esc(errText(err))));
     }
+  } finally {
+    updateDirty();
   }
 }
 
 /* ----- Schema actions ----- */
-function schemaNotice(html) { const n = $("schema-notice"); if (n) n.innerHTML = html || ""; }
-
 async function formatSchema() {
   try {
     if (!schemaEd.value.trim()) { schemaNotice(""); return; }
@@ -1078,7 +1457,7 @@ async function formatSchema() {
     updateSchemaDirty();
     schemaNotice("");
   } catch (e) {
-    schemaNotice('<div class="notice error">' + esc(errText(e)) + "</div>");
+    schemaNotice(notice("error", "<strong>Invalid.</strong> " + esc(errText(e))));
   }
 }
 
@@ -1087,6 +1466,8 @@ async function saveSchema() {
   const body = { revision: state.revision };
   if (raw) { body.schema = schemaEd.value; body.schema_format = state.schemaFormat; }
   else { body.schema = null; }
+  const save = $("schema-save-btn");
+  if (save) save.disabled = true;
   try {
     const { data } = await api("PUT",
       "/api/apps/" + encodeURIComponent(state.selected) + "/schema", body);
@@ -1094,24 +1475,29 @@ async function saveSchema() {
     state.schema = data.schema;
     state.schemaPristine = data.schema ? await serialize(data.schema, state.schemaFormat) : "";
     schemaEd.value = state.schemaPristine;
-    updateSchemaDirty();
-    const flag = $("schema-flag");
-    if (flag) flag.textContent = state.schema ? "yes" : "none";
-    schemaNotice('<div class="notice ok">' +
-      (state.schema ? "Schema saved." : "Schema cleared.") + "</div>");
-    toast("Schema updated (revision " + state.revision + ")");
+    setSchemaFlag();
+    schemaNotice(notice("ok",
+      state.schema ? "✓ Schema saved." : "✓ Schema cleared."), true);
+    toast("Schema saved — r" + state.revision + ".");
     await refreshApps();
   } catch (err) {
     if (err.status === 409) {
-      schemaNotice('<div class="notice warn">' + esc(errText(err)) +
-        '<div class="notice-actions">' +
-        '<button class="btn sm" id="schema-conflict-reload">Reload latest</button></div></div>');
+      schemaNotice(conflictNotice(err, "schema-conflict-reload"));
       $("schema-conflict-reload").onclick = () => loadAppDetail(state.selected);
     } else {
       // A 400 here usually means the current config violates the new schema.
-      schemaNotice('<div class="notice error">Schema rejected: ' + esc(errText(err)) + "</div>");
+      schemaNotice(notice("error", "<strong>Schema rejected.</strong> " + esc(errText(err))));
     }
+  } finally {
+    updateSchemaDirty();
   }
+}
+
+function setSchemaFlag() {
+  const flag = $("schema-flag");
+  if (!flag) return;
+  flag.textContent = state.schema ? "schema ✓" : "no schema";
+  flag.classList.toggle("faint", !state.schema);
 }
 
 function applyRevision(rev) {
@@ -1123,17 +1509,18 @@ function applyRevision(rev) {
 
 async function deleteApp() {
   const name = state.selected;
-  if (!confirm('Delete app "' + name + '"? This cannot be undone.')) return;
+  if (!confirm('Delete "' + name + '"? The app, its config, and its history ' +
+      "are removed. This cannot be undone.")) return;
   try {
     await api("DELETE", "/api/apps/" + encodeURIComponent(name));
     closeWs();
     state.selected = null;
-    $("content").innerHTML =
-      '<div class="empty-state">Select an app, or create one to get started.</div>';
+    clearDrafts();
+    $("content").innerHTML = EMPTY_MAIN;
     await refreshApps();
-    toast('App "' + name + '" deleted');
+    toast('"' + name + '" deleted.');
   } catch (err) {
-    toast(errText(err));
+    toast("Couldn't delete — " + errText(err));
   }
 }
 
@@ -1189,8 +1576,19 @@ function openWs(name, attempt) {
 
 function setLive(on) {
   const dot = $("live-dot"), label = $("live-label");
-  if (dot) dot.classList.toggle("on", on);
   if (label) label.textContent = on ? "live" : "offline";
+  if (dot) {
+    const was = dot.classList.contains("on");
+    dot.classList.toggle("on", on);
+    dot.classList.toggle("off", !on);
+    if (on && !was) {
+      // One-shot connect pulse (2 iterations, never infinite).
+      dot.classList.remove("pulse");
+      void dot.offsetWidth;
+      dot.classList.add("pulse");
+    }
+    if (!on) dot.classList.remove("pulse");
+  }
 }
 
 async function onRemoteUpdate(msg) {
@@ -1203,17 +1601,16 @@ async function onRemoteUpdate(msg) {
     // edits: the eventual Save must carry the OLD revision so the server can
     // 409 instead of silently overwriting the other writer's change. The
     // conflict-on-save flow then guides the user.
-    const warn = '<div class="notice warn">This config changed on the server ' +
-      "(revision " + esc(msg.revision) + "). Your unsaved edits are still here; " +
-      "saving will report a conflict." +
-      '<div class="notice-actions">' +
-      '<button class="btn sm" id="accept-remote">Load server version</button></div></div>';
+    const warn = notice("warn",
+      "This app changed on the server (now r" + esc(msg.revision) + "). " +
+      "Your unsaved edits are untouched; saving will report a conflict." +
+      ' <button class="link" id="accept-remote">Load server version</button>');
     if (state.activeTab === "config" && configEd) {
       configNotice(warn);
-      $("accept-remote").onclick = () => loadAppDetail(state.selected);
+      $("accept-remote").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
     } else if (state.activeTab === "schema" && schemaEd) {
       schemaNotice(warn);
-      $("accept-remote").onclick = () => loadAppDetail(state.selected);
+      $("accept-remote").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
     }
     return;
   }
@@ -1227,6 +1624,10 @@ async function onRemoteUpdate(msg) {
       state.pristine = incoming;
       configEd.value = incoming;
       updateDirty();
+    } else {
+      // Keep pristine in sync so a later return to the config tab is clean.
+      try { state.pristine = await serialize(msg.data, state.configFormat); }
+      catch (_) { state.pristine = JSON.stringify(msg.data, null, 2); }
     }
   }
   if (state.activeTab === "history") renderHistoryTab();
@@ -1240,8 +1641,7 @@ async function onRemoteUpdate(msg) {
         ? await serialize(state.schema, state.schemaFormat) : "";
       schemaEd.value = state.schemaPristine;
       updateSchemaDirty();
-      const flag = $("schema-flag");
-      if (flag) flag.textContent = state.schema ? "yes" : "none";
+      setSchemaFlag();
     } catch (_) { /* leave the current view as-is */ }
   }
 }
@@ -1280,17 +1680,17 @@ function closeModal() {
 }
 
 // Convert a plain modal textarea between formats, tracking the current format
-// in a data attribute so the next switch knows the source format.
-async function changeModalFormat(taId, selId) {
-  const ta = $(taId), sel = $(selId);
+// in a data attribute so the next switch knows the source format. Conversion
+// failure re-checks the previous radio (revert-on-fail).
+async function changeModalFormat(taId, prefix, to) {
+  const ta = $(taId);
   const from = ta.dataset.fmt || "json";
-  const to = sel.value;
   if (from === to) return;
   if (ta.value.trim()) {
     try { ta.value = await convertFormat(ta.value, from, to); }
     catch (e) {
       $("m-error").textContent = "Cannot convert to " + to.toUpperCase() + ": " + errText(e);
-      sel.value = from;
+      setFmtSwitcher(prefix, from);
       return;
     }
   }
@@ -1302,36 +1702,37 @@ function openNewAppModal() {
   openModal(`
     <h3>New app</h3>
     <div class="field">
-      <label>Name (letters, digits, <code>-</code>, <code>_</code>)</label>
-      <input class="input" id="m-name" placeholder="my-service" />
+      <label class="lbl" for="m-name">Name</label>
+      <input class="u-input" id="m-name" placeholder="my-service" />
+      <p class="field-hint">letters, digits, - and _</p>
     </div>
     <div class="field">
-      <label>Description (optional)</label>
-      <input class="input" id="m-desc" />
-    </div>
-    <div class="field">
-      <div class="field-head">
-        <label>Initial configuration</label>
-        <select class="select mini" id="m-config-format">${fmtOptions("json")}</select>
-      </div>
-      <textarea class="input code" id="m-config" rows="6" data-fmt="json">{}</textarea>
+      <label class="lbl" for="m-desc">Description <span class="opt">(optional)</span></label>
+      <input class="u-input" id="m-desc" />
     </div>
     <div class="field">
       <div class="field-head">
-        <label>Schema (optional)</label>
-        <select class="select mini" id="m-schema-format">${fmtOptions("json")}</select>
+        <label class="lbl" for="m-config">Initial configuration</label>
+        ${fmtSwitcher("m-cfg-fmt", "json")}
       </div>
-      <textarea class="input code" id="m-schema" rows="5" data-fmt="json"
+      <textarea class="box-code" id="m-config" rows="6" data-fmt="json">{}</textarea>
+    </div>
+    <div class="field">
+      <div class="field-head">
+        <label class="lbl" for="m-schema">Schema <span class="opt">(optional)</span></label>
+        ${fmtSwitcher("m-sch-fmt", "json")}
+      </div>
+      <textarea class="box-code" id="m-schema" rows="5" data-fmt="json"
         placeholder="Leave empty for no schema"></textarea>
     </div>
     <div class="modal-error" id="m-error"></div>
     <div class="modal-actions">
-      <button class="btn" id="m-cancel">Cancel</button>
-      <button class="btn primary" id="m-create">Create app</button>
+      <button class="link" id="m-cancel">Cancel</button>
+      <button class="btn" id="m-create">Create app</button>
     </div>
   `);
-  $("m-config-format").onchange = () => changeModalFormat("m-config", "m-config-format");
-  $("m-schema-format").onchange = () => changeModalFormat("m-schema", "m-schema-format");
+  bindFmtSwitcher("m-cfg-fmt", (v) => changeModalFormat("m-config", "m-cfg-fmt", v));
+  bindFmtSwitcher("m-sch-fmt", (v) => changeModalFormat("m-schema", "m-sch-fmt", v));
   $("m-cancel").onclick = closeModal;
   $("m-create").onclick = createApp;
   $("m-name").focus();
@@ -1344,20 +1745,20 @@ async function createApp() {
   const body = {
     name,
     data: $("m-config").value.trim() || "{}",
-    format: $("m-config-format").value,
+    format: $("m-config").dataset.fmt || "json",
   };
   if (desc) body.description = desc;
   const schemaRaw = $("m-schema").value.trim();
   if (schemaRaw) {
     body.schema = schemaRaw;
-    body.schema_format = $("m-schema-format").value;
+    body.schema_format = $("m-schema").dataset.fmt || "json";
   }
   try {
     await api("POST", "/api/apps", body);
     closeModal();
     await refreshApps();
     await selectApp(name);
-    toast('App "' + name + '" created');
+    toast('"' + name + '" created.');
   } catch (e) {
     $("m-error").textContent = errText(e);
   }
@@ -1368,17 +1769,17 @@ function openMetaModal() {
   openModal(`
     <h3>Edit app</h3>
     <div class="field">
-      <label>Name</label>
-      <input class="input" id="m-name" value="${esc(state.selected)}" />
+      <label class="lbl" for="m-name">Name</label>
+      <input class="u-input" id="m-name" value="${esc(state.selected)}" />
     </div>
     <div class="field">
-      <label>Description</label>
-      <input class="input" id="m-desc" value="${esc(info.description || "")}" />
+      <label class="lbl" for="m-desc">Description</label>
+      <input class="u-input" id="m-desc" value="${esc(info.description || "")}" />
     </div>
     <div class="modal-error" id="m-error"></div>
     <div class="modal-actions">
-      <button class="btn" id="m-cancel">Cancel</button>
-      <button class="btn primary" id="m-save">Save</button>
+      <button class="link" id="m-cancel">Cancel</button>
+      <button class="btn" id="m-save">Save</button>
     </div>
   `);
   $("m-cancel").onclick = closeModal;
@@ -1401,7 +1802,7 @@ async function saveMeta() {
     if (renamed) { closeWs(); openWs(state.selected); }
     renderAppList();
     await loadAppDetail(state.selected);
-    toast("App updated");
+    toast("App updated.");
   } catch (e) {
     $("m-error").textContent = errText(e);
   }
