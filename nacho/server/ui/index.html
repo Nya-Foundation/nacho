@@ -22,6 +22,7 @@
   --amber: #D6892A;
   --amber-strong: #A8681B;
   --danger: #B3402F;
+  --ok: #4A7A57;
   --scrim: rgba(30,30,27,.45);
   --c-str: #51785D;
   --c-num: #42688C;
@@ -49,6 +50,7 @@
     --amber: #E0A44A;
     --amber-strong: #E0A44A;
     --danger: #E06A55;
+    --ok: #8AB394;
     --scrim: rgba(0,0,0,.6);
     --c-str: #8AB394;
     --c-num: #84A9CC;
@@ -380,6 +382,11 @@ h1, h2, h3 { margin: 0; }
   background: color-mix(in srgb, var(--amber) 6%, transparent);
   border-radius: 0 6px 6px 0;
 }
+.notice.ok {
+  border-left-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 6%, transparent);
+  border-radius: 0 6px 6px 0;
+}
 .notice ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
 .notice .link { margin-left: 4px; }
 
@@ -665,12 +672,13 @@ async function serializeSafe(obj, fmt, label) {
 /* ===================================================================== */
 /* Cookie (needed so the WebSocket handshake can authenticate)             */
 /* ===================================================================== */
-/* The server (auth.py) compares the raw cookie value against the API key and
-   never URL-decodes it, so the value must be written unencoded here. `Secure`
-   is added when served over HTTPS. */
+/* The value is URL-encoded so keys containing `;`, `,`, or spaces survive the
+   cookie grammar; the server (auth.py) decodes before comparing. `Secure` is
+   added when served over HTTPS. */
 function setAuthCookie(key) {
   const secure = location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = "NACHO_api_key=" + key + "; path=" + COOKIE_PATH + "; SameSite=Strict" + secure;
+  document.cookie = "NACHO_api_key=" + encodeURIComponent(key) +
+    "; path=" + COOKIE_PATH + "; SameSite=Strict" + secure;
 }
 function clearAuthCookie() {
   const secure = location.protocol === "https:" ? "; Secure" : "";
@@ -1671,8 +1679,14 @@ async function onRemoteUpdate(msg) {
 /* ===================================================================== */
 function openModal(html) {
   const ov = $("modal-overlay");
-  ov.innerHTML = '<div class="modal">' + html + "</div>";
+  ov.innerHTML = '<div class="modal" role="dialog" aria-modal="true">' + html + "</div>";
   ov.classList.remove("hidden");
+  // Announce the modal by its heading, like confirmDialog does.
+  const heading = ov.querySelector("h3");
+  if (heading) {
+    if (!heading.id) heading.id = "modal-title";
+    ov.firstElementChild.setAttribute("aria-labelledby", heading.id);
+  }
   ov.onclick = (e) => { if (e.target === ov) closeModal(); };
   // Pull focus off whatever was behind the overlay (e.g. a code editor) so
   // keystrokes land in the modal, not the editor underneath it.

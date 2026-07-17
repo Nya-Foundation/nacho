@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import logging
 from typing import Optional, Sequence
+from urllib.parse import unquote
 
 from fastapi import Request, WebSocket
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -43,12 +44,24 @@ class AuthGuard:
             token.encode("utf-8"), self.api_key.encode("utf-8")
         )
 
+    def verify_cookie(self, raw: Optional[str]) -> bool:
+        """Verify the session cookie, which the UI writes URL-encoded.
+
+        The raw form is also accepted so a cookie written before encoding
+        was introduced keeps working until it is rewritten.
+        """
+        if not raw:
+            return False
+        if self.verify_token(raw):
+            return True
+        decoded = unquote(raw)
+        return decoded != raw and self.verify_token(decoded)
+
     def verify_request(self, request: Request) -> bool:
         """Verify HTTP auth from the session cookie or Authorization header."""
         if not self.enabled:
             return True
-        cookie_key = request.cookies.get(_SESSION_COOKIE)
-        if self.verify_token(cookie_key):
+        if self.verify_cookie(request.cookies.get(_SESSION_COOKIE)):
             return True
         return self.verify_token(request.headers.get("Authorization"))
 
@@ -56,8 +69,7 @@ class AuthGuard:
         """Verify WebSocket auth from cookie or Authorization header."""
         if not self.enabled:
             return True
-        cookie_key = websocket.cookies.get(_SESSION_COOKIE)
-        if self.verify_token(cookie_key):
+        if self.verify_cookie(websocket.cookies.get(_SESSION_COOKIE)):
             return True
         return self.verify_token(websocket.headers.get("Authorization"))
 
