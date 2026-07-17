@@ -76,6 +76,28 @@ def test_ws_live_update_reaches_subscribed_client(live_server):
         backend.close()
 
 
+def test_ws_update_fans_out_to_all_subscribers(live_server):
+    """One REST write reaches every connected watcher, not just one.
+
+    The server-side broadcast loop is otherwise only ever exercised with a
+    single subscriber, so a fan-out regression (e.g. the first send error
+    aborting the loop) would go unnoticed without this.
+    """
+    watchers = [_watching_backend(live_server) for _ in range(3)]
+    try:
+        status, _ = _http_json(
+            "PUT",
+            live_server + "/api/apps/default/config",
+            {"data": {"fanout": "yes"}},
+        )
+        assert status == 200
+        for _, recorder in watchers:
+            recorder.wait_for(lambda p: p.get("fanout") == "yes")
+    finally:
+        for backend, _ in watchers:
+            backend.close()
+
+
 def test_ws_watcher_survives_server_restart(make_live_server, monkeypatch):
     """The watcher reconnects after a restart and receives post-restart pushes."""
     monkeypatch.setattr(remote_mod, "_WS_RECONNECT_DELAY", 0.2)

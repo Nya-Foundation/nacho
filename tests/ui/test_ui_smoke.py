@@ -9,6 +9,7 @@ Run with:  uv run pytest -m ui --no-cov -q
 """
 
 import json
+import urllib.error
 import urllib.request
 
 import pytest
@@ -130,6 +131,28 @@ def test_auth_flow_wrong_then_right_key(make_live_server, new_page):
     expect(page.locator("#app-list .app-item .app-name")).to_have_text("default")
 
 
+def test_auth_key_with_cookie_hostile_chars(make_live_server, new_page):
+    """A key containing `;` and spaces survives the cookie round-trip.
+
+    The WS handshake can only authenticate via the cookie (browsers cannot
+    set an Authorization header on WebSockets), so this fails if the UI does
+    not URL-encode the cookie value or the server does not decode it.
+    """
+    key = "se;cret ui,key"
+    server = make_live_server(api_key=key)
+    page = new_page()
+    page.goto(server.url + "/ui")
+    page.fill("#key-input", key)
+    page.click("#connect-btn")
+    expect(page.locator("#app-view")).to_be_visible()
+
+    # "live" proves the WebSocket authenticated through the encoded cookie.
+    select_default_app(page)
+
+    put_config(server.url, {"guarded": True}, api_key=key)
+    expect(page.locator(EDITOR)).to_have_value(json.dumps({"guarded": True}, indent=2))
+
+
 def test_edit_and_save_round_trip(make_live_server, new_page):
     """Type a config, Save, see success feedback, verify via REST."""
     server = make_live_server()
@@ -208,6 +231,50 @@ def test_active_tab_reclick_keeps_edits(make_live_server, new_page):
     expect(page.locator("#editor-status")).to_have_text("● Unsaved changes")
     # A no-op re-click must not raise the discard-confirm dialog.
     expect(page.locator("#confirm-dialog")).to_have_count(0)
+
+
+def test_create_and_delete_app_via_ui(make_live_server, new_page):
+    """The New-app modal creates a real app; Delete removes it server-side."""
+    server = make_live_server()
+    page = new_page()
+    open_app_view(page, server.url)
+
+    page.click("#new-app-btn")
+    page.fill("#m-name", "svc")
+    page.fill("#m-config", '{"port": 8080}')
+    page.click("#m-create")
+
+    expect(page.locator("#app-list .app-item", has_text="svc")).to_be_visible()
+    assert rest(server.url + "/api/apps/svc/config") == {"port": 8080}
+
+    page.locator("#app-list .app-item", has_text="svc").click()
+    expect(page.locator(EDITOR)).to_be_visible()
+    page.click("#delete-btn")
+    expect(page.locator("#confirm-dialog")).to_be_visible()
+    page.click("#confirm-accept")
+
+    expect(page.locator("#app-list .app-item", has_text="svc")).to_have_count(0)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        rest(server.url + "/api/apps/svc/config")
+    assert exc.value.code == 404
+
+
+def test_ui_reconnects_after_server_restart(make_live_server, new_page):
+    """The UI watcher backs off, reconnects, and resumes live updates."""
+    server = make_live_server()
+    page = new_page()
+    open_app_view(page, server.url)
+    select_default_app(page)
+
+    server.stop()
+    expect(page.locator("#live-label")).to_have_text("offline")
+
+    make_live_server(port=server.port, data_dir=server.data_dir)
+    expect(page.locator("#live-label")).to_have_text("live")
+
+    # Live updates work again after the reconnect, not just the status dot.
+    put_config(server.url, {"revived": True})
+    expect(page.locator(EDITOR)).to_have_value(json.dumps({"revived": True}, indent=2))
 
 
 def test_history_lists_revisions_and_restore(make_live_server, new_page):

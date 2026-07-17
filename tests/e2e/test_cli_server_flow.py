@@ -6,8 +6,11 @@ binary, the HTTP client, and a real server process — exactly as a user would.
 
 import json
 import os
+import queue
 import shutil
 import subprocess
+import threading
+import urllib.request
 
 import pytest
 
@@ -152,6 +155,45 @@ def test_cli_auth_flow(make_live_server):
     )
     assert fetched.returncode == 0, fetched.stderr
     assert json.loads(fetched.stdout) == 42
+
+
+def test_cli_watch_streams_live_updates(live_server):
+    """`nacho watch` prints the current config, then each pushed update.
+
+    This is the only place the watch command runs against a real WebSocket;
+    its unit tests substitute a fake backend.
+    """
+    proc = subprocess.Popen(
+        [nacho_bin, "watch", "--remote", live_server, "--app-name", "default"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    lines = queue.Queue()
+
+    def pump():
+        for line in proc.stdout:
+            lines.put(line)
+
+    threading.Thread(target=pump, daemon=True).start()
+    try:
+        # First line is the initial config — its arrival also proves the
+        # subscription is live, so the write below cannot race the connect.
+        assert json.loads(lines.get(timeout=15)) == {}
+
+        request = urllib.request.Request(
+            live_server + "/api/apps/default/config",
+            data=json.dumps({"data": {"live": "yes"}}).encode(),
+            method="PUT",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=5):
+            pass
+
+        assert json.loads(lines.get(timeout=15)) == {"live": "yes"}
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
 
 
 def test_cli_history_and_rollback_flow(live_server):
