@@ -16,6 +16,7 @@ _DIR_MARKERS = {
     "integration": "integration",
     "e2e": "e2e",
     "docker": "docker",
+    "ui": "ui",
 }
 
 
@@ -83,15 +84,24 @@ def make_live_server(tmp_path):
     """
     handles = []
 
-    def start(*, api_key=None, port=None, data_dir=None):
+    def start(*, api_key=None, port=None, data_dir=None, extra_args=()):
         port = port or _free_port()
         data_dir = data_dir or (tmp_path / "server-state")
         cmd = [
-            sys.executable, "-m", "nacho.cli.main", "server",
-            "--host", "127.0.0.1", "--port", str(port), "--data-dir", str(data_dir),
+            sys.executable,
+            "-m",
+            "nacho.cli.main",
+            "server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--data-dir",
+            str(data_dir),
         ]
         if api_key:
             cmd += ["--api-key", api_key]
+        cmd += list(extra_args)
         proc = subprocess.Popen(cmd)
         handle = ServerHandle(proc, f"http://127.0.0.1:{port}", port, data_dir, api_key)
         handles.append(handle)

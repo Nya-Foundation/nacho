@@ -84,3 +84,26 @@ jobs:
 
     - name: Run integration and e2e suites
       run: uv run pytest -m "integration or e2e" --no-cov -v
+
+  ui-tests:
+    name: Web UI (playwright)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: "0.7.9"
+        python-version: '3.13'
+        enable-cache: true
+
+    - name: Install locked dependencies
+      run: uv sync --frozen --all-extras
+
+    - name: Install chromium
+      run: uv run playwright install chromium --with-deps
+
+    - name: Run browser UI suite
+      run: uv run pytest -m ui --no-cov -v
