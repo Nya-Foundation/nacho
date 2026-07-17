@@ -272,42 +272,29 @@ class AppManager:
 
     def replace(
         self,
-        current_name: str,
+        name: str,
         *,
-        new_name: str,
         config_data: Dict[str, Any],
         description: Optional[str] = None,
         schema: Optional[Dict[str, Any]] = None,
         expected_revision: Optional[int] = None,
     ) -> ConfigApp:
-        validate_app_name(new_name)
+        """Replace an app's config/schema/description. Renaming is rename()'s job."""
         with self._lock:
-            current = self._require_app(current_name)
+            current = self._require_app(name)
             self._check_revision(current, expected_revision)
-            if new_name != current_name and new_name in self._apps:
-                raise ValueError(f"App {new_name!r} already exists")
 
             target_schema = schema if schema is not None else current.schema
             config_changed = current.config.replace(config_data, schema=target_schema)
             metadata_changed = (
-                new_name != current_name
-                or description != current.description
-                or target_schema != current.schema
+                description != current.description or target_schema != current.schema
             )
-
-            if new_name != current_name:
-                del self._apps[current_name]
-                current.name = new_name
-                current.hub.app_name = new_name
-                self._apps[new_name] = current
 
             current.description = description
             current.schema = copy.deepcopy(target_schema)
             if config_changed or metadata_changed:
                 current.touch()
             self.store.save(current)
-            if new_name != current_name:
-                self.store.delete(current_name)
             return current
 
     def get(self, name: str) -> Optional[ConfigApp]:

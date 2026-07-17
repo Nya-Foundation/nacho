@@ -90,9 +90,12 @@ def test_auth_protects_api_routes():
 
     with TestClient(orchestrator.app) as client:
         assert client.get("/health").status_code == 200
-        assert client.get("/docs").status_code == 403
-        assert client.get("/openapi.json").status_code == 403
-        assert client.get("/api/apps/svc/config").status_code == 403
+        # API docs are deliberately public — GET / advertises them.
+        assert client.get("/docs").status_code == 200
+        assert client.get("/openapi.json").status_code == 200
+        response = client.get("/api/apps/svc/config")
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == "Bearer"
 
         response = client.get(
             "/api/apps/svc/config",
@@ -167,21 +170,18 @@ def test_read_only_rejects_writes():
         assert client.get("/api/apps/svc/config").json() == {"x": 1}
 
 
-def test_replace_app_name_conflict_preserves_original():
-    orchestrator = NachoOrchestrator(
-        apps={
-            "svc": Nacho({"x": 1}, events=True),
-            "taken": Nacho({"x": 2}, events=True),
-        }
-    )
+def test_replace_app_ignores_body_name():
+    """PUT replaces content only; renaming is PATCH /metadata's job."""
+    orchestrator = NachoOrchestrator(apps={"svc": Nacho({"x": 1}, events=True)})
 
     with TestClient(orchestrator.app) as client:
         response = client.put(
             "/api/apps/svc",
-            json={"name": "taken", "data": json.dumps({"x": 3}), "format": "json"},
+            json={"name": "other", "data": json.dumps({"x": 3}), "format": "json"},
         )
-        assert response.status_code == 400
-        assert client.get("/api/apps/svc/config").json() == {"x": 1}
+        assert response.status_code == 200
+        assert client.get("/api/apps/svc/config").json() == {"x": 3}
+        assert client.get("/api/apps/other").status_code == 404
 
 
 def test_replace_app_preserves_managed_objects_and_handlers():
@@ -326,7 +326,7 @@ def test_convert_endpoint_requires_auth():
     orchestrator = NachoOrchestrator(api_key="secret")
 
     with TestClient(orchestrator.app) as client:
-        assert client.post("/api/convert", json={"data": {}, "to": "yaml"}).status_code == 403
+        assert client.post("/api/convert", json={"data": {}, "to": "yaml"}).status_code == 401
         response = client.post(
             "/api/convert",
             json={"data": {"a": 1}, "to": "yaml"},
@@ -375,8 +375,8 @@ def test_get_schema_returns_app_schema():
         client.post("/api/apps", json={"name": "with", "data": {"port": 1}, "schema": schema})
         client.post("/api/apps", json={"name": "without", "data": {"port": 1}})
 
-        assert client.get("/api/apps/with/schema").json()["data"]["schema"] == schema
-        assert client.get("/api/apps/without/schema").json()["data"]["schema"] is None
+        assert client.get("/api/apps/with/schema").json()["data"] == schema
+        assert client.get("/api/apps/without/schema").json()["data"] is None
 
 
 def test_update_schema_sets_schema_after_creation():
@@ -392,7 +392,7 @@ def test_update_schema_sets_schema_after_creation():
         assert response.status_code == 200
         assert response.json()["schema"] == schema
         assert response.json()["revision"] == 2
-        assert client.get("/api/apps/svc/schema").json()["data"]["schema"] == schema
+        assert client.get("/api/apps/svc/schema").json()["data"] == schema
         assert client.get("/api/apps/svc").json()["data"]["schema"] is True
 
 
@@ -405,7 +405,7 @@ def test_update_schema_rejects_schema_the_current_config_violates():
         assert response.status_code == 400
         assert "port" in response.json()["detail"]
         # The schema was not applied.
-        assert client.get("/api/apps/svc/schema").json()["data"]["schema"] is None
+        assert client.get("/api/apps/svc/schema").json()["data"] is None
 
 
 def test_update_schema_with_null_clears_schema():
@@ -417,7 +417,7 @@ def test_update_schema_with_null_clears_schema():
         response = client.put("/api/apps/svc/schema", json={"schema": None})
         assert response.status_code == 200
         assert response.json()["schema"] is None
-        assert client.get("/api/apps/svc/schema").json()["data"]["schema"] is None
+        assert client.get("/api/apps/svc/schema").json()["data"] is None
 
 
 def test_update_schema_honours_revision_conflict():

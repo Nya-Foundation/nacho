@@ -23,6 +23,7 @@ from nacho.utils.path import get_nested_value
 from .models import (
     AppCreateRequest,
     AppMetadataRequest,
+    AppReplaceRequest,
     ConfigRequest,
     ConvertRequest,
     PathUpdateRequest,
@@ -170,7 +171,7 @@ class NachoOrchestrator:
         @self.app.put("/api/apps/{app_name}")
         async def replace_app(
             app_name: str,
-            request: AppCreateRequest,
+            request: AppReplaceRequest,
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -178,7 +179,6 @@ class NachoOrchestrator:
                 schema = self._parse_schema(request.schema_, request.schema_format)
                 app = self.manager.replace(
                     app_name,
-                    new_name=request.name,
                     config_data=config_data,
                     description=request.description,
                     schema=schema,
@@ -254,7 +254,7 @@ class NachoOrchestrator:
         @self.app.get("/api/apps/{app_name}/schema")
         async def get_schema(app_name: str) -> Dict[str, Any]:
             app = self._get_app(app_name)
-            return {"data": {"schema": app.schema}}
+            return {"data": app.schema}
 
         @self.app.put("/api/apps/{app_name}/schema")
         async def replace_schema(
@@ -278,8 +278,9 @@ class NachoOrchestrator:
             return {"message": "Schema updated", "revision": app.revision, "schema": app.schema}
 
         @self.app.get("/api/apps/{app_name}/config/{path:path}")
-        async def get_path(app_name: str, path: str) -> Dict[str, Any]:
+        async def get_path(app_name: str, path: str, response: Response) -> Dict[str, Any]:
             app = self._get_app(app_name)
+            self._set_revision_headers(response, app)
             # Resolve against the snapshot directly: Nacho.get() deep-copies its
             # result, so an identity-sentinel passed to it would never compare
             # equal — get_nested_value preserves the sentinel by identity.
@@ -354,7 +355,9 @@ class NachoOrchestrator:
             try:
                 config_data = self._parse_config(request.data, request.format)
             except InvalidConfigDataError as exc:
-                return {"valid": False, "errors": [str(exc)], "data": app.config.get_all()}
+                # "data" is always the submitted payload (parsed), never the
+                # app's current config; None signals it could not be parsed.
+                return {"valid": False, "errors": [str(exc)], "data": None}
             errors = app.config.check(config_data)
             return {"valid": not errors, "errors": errors, "data": config_data}
 

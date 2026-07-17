@@ -656,6 +656,7 @@ $("key-input").addEventListener("keydown", (e) => {
 
 $("disconnect-btn").onclick = () => {
   closeWs();
+  clearInterval(state.appsPoll);
   state.apiKey = "";
   state.selected = null;
   localStorage.removeItem("nacho_api_key");
@@ -668,7 +669,14 @@ async function enterApp() {
   $("connect-view").classList.add("hidden");
   $("app-view").classList.remove("hidden");
   $("ro-badge").classList.toggle("hidden", !state.readOnly);
-  await refreshApps();
+  try {
+    await refreshApps();
+  } catch (err) {
+    $("app-list").innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
+  }
+  // Keep the sidebar (revisions, other apps) reasonably fresh.
+  clearInterval(state.appsPoll);
+  state.appsPoll = setInterval(() => refreshApps().catch(() => {}), 30000);
 }
 
 /* ===================================================================== */
@@ -717,9 +725,9 @@ async function loadAppDetail(name) {
   try {
     const cfg = await api("GET", "/api/apps/" + encodeURIComponent(name) + "/config");
     configObj = cfg.data;
-    state.revision = parseInt(cfg.headers.get("X-Nacho-Revision"), 10) || state.apps[name].revision;
+    state.revision = parseInt(cfg.headers.get("X-Nacho-Revision"), 10) || state.apps[name]?.revision || 1;
     const sch = await api("GET", "/api/apps/" + encodeURIComponent(name) + "/schema");
-    schemaObj = sch.data.data.schema;
+    schemaObj = sch.data.data;
   } catch (err) {
     $("content").innerHTML = '<div class="notice error">' + esc(errText(err)) + "</div>";
     return;
@@ -1051,9 +1059,9 @@ function openWs(name, attempt) {
   ws.onopen = () => { setLive(true); attempt = 0; };
   ws.onclose = () => {
     setLive(false);
-    // Reconnect with exponential backoff, and give up after a few tries so a
-    // genuinely unreachable socket does not spam the console forever.
-    if (state.selected === name && attempt < 5) {
+    // Reconnect with exponential backoff, capped at 30s. Never give up: a
+    // server restart minutes later should not leave the UI silently stale.
+    if (state.selected === name) {
       const delay = Math.min(30000, 2000 * Math.pow(2, attempt));
       state.wsRetry = setTimeout(() => openWs(name, attempt + 1), delay);
     }
@@ -1074,6 +1082,7 @@ function setLive(on) {
 
 async function onRemoteUpdate(msg) {
   applyRevision(msg.revision);
+  refreshApps().catch(() => {});
   if (msg.data !== undefined) {
     state.configObj = msg.data;
     if (state.activeTab === "config" && configEd) {
@@ -1103,7 +1112,7 @@ async function onRemoteUpdate(msg) {
     try {
       const sch = await api("GET",
         "/api/apps/" + encodeURIComponent(state.selected) + "/schema");
-      state.schema = sch.data.data.schema;
+      state.schema = sch.data.data;
       state.schemaPristine = state.schema
         ? await serialize(state.schema, state.schemaFormat) : "";
       schemaEd.value = state.schemaPristine;

@@ -14,7 +14,9 @@ LOGGER = logging.getLogger(__name__)
 
 _AUTH_PREFIX = "Bearer "
 _SESSION_COOKIE = "NACHO_api_key"
-_DEFAULT_PUBLIC_PATHS = ("/health", "/favicon.ico", "/ui")
+# /docs, /redoc, and /openapi.json stay public: GET / advertises the docs and
+# the API surface is not a secret — only the data behind it is.
+_DEFAULT_PUBLIC_PATHS = ("/health", "/favicon.ico", "/ui", "/docs", "/redoc", "/openapi.json")
 
 
 class AuthGuard:
@@ -83,8 +85,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         self.logger.debug("Rejected unauthenticated request to %s", request.url.path)
         return JSONResponse(
-            status_code=403,
+            status_code=401,
             content={"error": "Unauthorized: invalid API key"},
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     def _is_public(self, path: str) -> bool:

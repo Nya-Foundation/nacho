@@ -153,8 +153,14 @@ def create_parser() -> argparse.ArgumentParser:
     # Validate command
     validate = subparsers.add_parser("validate", help="Validate configuration")
     validate.add_argument("--config", "-c", default="config.yaml", help="Configuration file")
-    validate.add_argument("--schema", required=True, help="Schema file")
-    validate.add_argument("--remote", help="Remote server URL")
+    validate.add_argument(
+        "--schema",
+        help="Schema file (optional with --remote: the server's stored schema is used)",
+    )
+    validate.add_argument(
+        "--remote",
+        help="Validate against a remote app's schema instead of a local schema file",
+    )
     validate.add_argument(
         "--app-name",
         default="default",
@@ -172,7 +178,57 @@ def create_parser() -> argparse.ArgumentParser:
         help="Built-in template to start from",
     )
 
+    # Apps command group (remote app management)
+    apps = subparsers.add_parser("apps", help="Manage apps on a remote server")
+    apps_sub = apps.add_subparsers(dest="apps_command", required=True)
+
+    apps_list = apps_sub.add_parser("list", help="List apps on the server")
+    _add_remote_args(apps_list, app_name=False)
+    apps_list.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
+
+    apps_create = apps_sub.add_parser("create", help="Create an app on the server")
+    apps_create.add_argument("name", help="App name")
+    _add_remote_args(apps_create, app_name=False)
+    apps_create.add_argument("--description", help="App description")
+    apps_create.add_argument("--schema", help="JSON Schema file to attach")
+    apps_create.add_argument("--config", "-c", help="Initial configuration file")
+
+    apps_delete = apps_sub.add_parser("delete", help="Delete an app from the server")
+    apps_delete.add_argument("name", help="App name")
+    _add_remote_args(apps_delete, app_name=False)
+
+    # Schema command group (remote schema management)
+    schema = subparsers.add_parser("schema", help="Manage a remote app's schema")
+    schema_sub = schema.add_subparsers(dest="schema_command", required=True)
+
+    schema_get = schema_sub.add_parser("get", help="Print the app's stored schema")
+    _add_remote_args(schema_get)
+    schema_get.add_argument("--format", "-f", choices=["json", "yaml", "raw"], default="raw")
+
+    schema_push = schema_sub.add_parser("push", help="Upload a schema file to the app")
+    schema_push.add_argument("schema_file", help="Schema file (json/yaml/toml)")
+    _add_remote_args(schema_push)
+    schema_push.add_argument(
+        "--revision",
+        type=int,
+        help="Expected remote app revision for conflict-safe updates",
+    )
+
+    # Watch command (live updates)
+    watch = subparsers.add_parser(
+        "watch",
+        help="Stream an app's config over WebSocket (prints the current config, then each update)",
+    )
+    _add_remote_args(watch)
+
     return parser
+
+
+def _add_remote_args(p: argparse.ArgumentParser, app_name: bool = True) -> None:
+    p.add_argument("--remote", required=True, help="Remote server URL")
+    if app_name:
+        p.add_argument("--app-name", default="default", help="Application name")
+    p.add_argument("--api-key", help="API key for remote server")
 
 
 def create_config(
@@ -245,6 +301,37 @@ def remote_request_error(response: Any) -> str:
     return str(payload)
 
 
+def remote_json(
+    method: str,
+    url: str,
+    api_key: Optional[str],
+    payload: Optional[dict] = None,
+    params: Optional[dict] = None,
+) -> Any:
+    """Perform a remote API request and return the parsed JSON body.
+
+    Raises ImportError without the remote extra, RuntimeError on HTTP errors.
+    """
+    if not HAS_REMOTE_DEPS:
+        raise ImportError("Remote features require: pip install nacho-python[remote]")
+    import requests
+
+    response = requests.request(
+        method,
+        url,
+        json=payload,
+        params=params,
+        headers=remote_headers(api_key),
+        timeout=10,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(remote_request_error(response))
+    try:
+        return response.json()
+    except ValueError:  # empty or non-JSON body
+        return None
+
+
 def remote_get(
     remote: str,
     app_name: str,
@@ -263,10 +350,11 @@ def remote_get(
     if response.status_code >= 400:
         raise RuntimeError(remote_request_error(response))
     revision = response.headers.get("X-Nacho-Revision")
+    parsed_revision = int(revision) if revision and revision.isdigit() else None
     payload = response.json()
     if key is not None:
-        return payload.get("value"), None
-    return payload, int(revision) if revision and revision.isdigit() else None
+        return payload.get("value"), parsed_revision
+    return payload, parsed_revision
 
 
 def remote_set(
@@ -278,7 +366,7 @@ def remote_set(
     revision: Optional[int] = None,
 ) -> int:
     if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho-python[remote]")
+        print("Remote connection requires: pip install nacho-python[remote]", file=sys.stderr)
         return 1
     import requests
 
@@ -292,7 +380,7 @@ def remote_set(
         timeout=10,
     )
     if response.status_code >= 400:
-        print(f"Error: {remote_request_error(response)}")
+        print(f"Error: {remote_request_error(response)}", file=sys.stderr)
         return 1
     body = response.json()
     print(f"Set {key} = {value} (revision {body.get('revision')})")
@@ -307,7 +395,7 @@ def remote_delete(
     revision: Optional[int] = None,
 ) -> int:
     if not HAS_REMOTE_DEPS:
-        print("Remote connection requires: pip install nacho-python[remote]")
+        print("Remote connection requires: pip install nacho-python[remote]", file=sys.stderr)
         return 1
     import requests
 
@@ -319,7 +407,7 @@ def remote_delete(
         timeout=10,
     )
     if response.status_code >= 400:
-        print(f"Error: {remote_request_error(response)}")
+        print(f"Error: {remote_request_error(response)}", file=sys.stderr)
         return 1
     body = response.json()
     print(f"Deleted {key} (revision {body.get('revision')})")
@@ -331,7 +419,7 @@ def cmd_server(args: argparse.Namespace) -> int:
     Handle server command.
     """
     if not HAS_SERVER_DEPS:
-        print("Server features require: pip install nacho-python[server]")
+        print("Server features require: pip install nacho-python[server]", file=sys.stderr)
         return 1
 
     print(banner())
@@ -390,7 +478,7 @@ def cmd_get(args: argparse.Namespace) -> int:
         print(format_output(value, args.format))
         return 0
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 
@@ -417,7 +505,7 @@ def cmd_set(args: argparse.Namespace) -> int:
         print(f"Set {args.key} = {parsed_value}")
         return 0
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 
@@ -439,41 +527,54 @@ def cmd_delete(args: argparse.Namespace) -> int:
         if config.delete(args.key):
             config.save()
             print(f"Deleted {args.key}")
-        else:
-            print(f"Key '{args.key}' not found")
-        return 0
+            return 0
+        print(f"Key '{args.key}' not found", file=sys.stderr)
+        return 1
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """
-    Handle validate command.
-    """
-    if not HAS_SCHEMA_DEPS:
-        print("Schema validation requires: pip install nacho-python[schema]")
-        return 1
-
+    """Validate a local config file — against a local schema file, or against
+    the schema the remote server actually enforces (--remote)."""
     try:
-        config = create_config(
-            args.config,
-            schema=args.schema,
-            remote_url=args.remote,
-            remote_app_name=args.app_name,
-            api_key=args.api_key,
-        )
-        errors = config.validate()
+        if args.remote:
+            from nacho.utils.io import load_file
+
+            if not Path(args.config).exists():
+                print(f"Error: configuration file not found: {args.config}", file=sys.stderr)
+                return 1
+            data = load_file(args.config)
+            body = remote_json(
+                "POST",
+                f"{args.remote.rstrip('/')}/api/apps/{quote(args.app_name, safe='')}/validate",
+                args.api_key,
+                payload={"data": data},
+            )
+            errors = body.get("errors", [])
+        else:
+            if not args.schema:
+                print("Error: --schema is required unless --remote is given", file=sys.stderr)
+                return 1
+            if not HAS_SCHEMA_DEPS:
+                print(
+                    "Schema validation requires: pip install nacho-python[schema]",
+                    file=sys.stderr,
+                )
+                return 1
+            config = create_config(args.config, schema=args.schema)
+            errors = config.validate()
+
         if errors:
             print("Validation failed:")
             for error in errors:
                 print(f"  - {error}")
             return 1
-        else:
-            print("Validation successful")
-            return 0
+        print("Validation successful")
+        return 0
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 
@@ -485,15 +586,131 @@ def cmd_init(args: argparse.Namespace) -> int:
         config_path = Path(args.config)
 
         if config_path.exists():
-            print(f"Configuration file already exists: {config_path}")
+            print(f"Configuration file already exists: {config_path}", file=sys.stderr)
             return 1
 
         save_file(config_path, BUILT_IN_TEMPLATES[args.template])
         print(f"Created configuration file: {config_path}")
         return 0
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         return 1
+
+
+def _api_url(remote: str, *segments: str) -> str:
+    parts = "/".join(quote(seg, safe="") for seg in segments)
+    return f"{remote.rstrip('/')}/api/{parts}" if parts else f"{remote.rstrip('/')}/api"
+
+
+def cmd_apps(args: argparse.Namespace) -> int:
+    """Manage apps on a remote server (list / create / delete)."""
+    try:
+        if args.apps_command == "list":
+            body = remote_json("GET", _api_url(args.remote, "apps"), args.api_key)
+            apps = body.get("data", {})
+            if args.format in ("json", "yaml"):
+                print(format_output(apps, args.format))
+            elif not apps:
+                print("No apps.")
+            else:
+                for name, info in sorted(apps.items()):
+                    schema_note = "schema" if info.get("schema") else "no schema"
+                    desc = info.get("description") or ""
+                    print(
+                        f"{name}  rev {info.get('revision')}  "
+                        f"{info.get('config_count', 0)} keys  {schema_note}"
+                        + (f"  — {desc}" if desc else "")
+                    )
+            return 0
+
+        if args.apps_command == "create":
+            from nacho.utils.io import load_file
+
+            payload: dict = {"name": args.name, "data": {}}
+            if args.description:
+                payload["description"] = args.description
+            if args.config:
+                payload["data"] = load_file(args.config)
+            if args.schema:
+                payload["schema"] = load_file(args.schema)
+            body = remote_json("POST", _api_url(args.remote, "apps"), args.api_key, payload)
+            print(f"Created app {args.name!r} (revision {body['app']['revision']})")
+            return 0
+
+        if args.apps_command == "delete":
+            remote_json("DELETE", _api_url(args.remote, "apps", args.name), args.api_key)
+            print(f"Deleted app {args.name!r}")
+            return 0
+
+        print(f"Unknown apps command: {args.apps_command}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_schema(args: argparse.Namespace) -> int:
+    """Manage a remote app's schema (get / push)."""
+    try:
+        if args.schema_command == "get":
+            body = remote_json(
+                "GET", _api_url(args.remote, "apps", args.app_name, "schema"), args.api_key
+            )
+            print(format_output(body.get("data"), args.format))
+            return 0
+
+        if args.schema_command == "push":
+            from nacho.utils.io import load_file
+
+            if not Path(args.schema_file).exists():
+                print(f"Error: schema file not found: {args.schema_file}", file=sys.stderr)
+                return 1
+            payload: dict = {"schema": load_file(args.schema_file)}
+            if args.revision is not None:
+                payload["revision"] = args.revision
+            body = remote_json(
+                "PUT", _api_url(args.remote, "apps", args.app_name, "schema"), args.api_key, payload
+            )
+            print(f"Schema updated (revision {body.get('revision')})")
+            return 0
+
+        print(f"Unknown schema command: {args.schema_command}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Stream config updates for an app: current config first, then each change."""
+    if not HAS_REMOTE_DEPS:
+        print("Remote connection requires: pip install nacho-python[remote]", file=sys.stderr)
+        return 1
+    import threading
+
+    from nacho.storage.remote import RemoteStorageBackend
+
+    try:
+        backend = RemoteStorageBackend(
+            url=args.remote, app_name=args.app_name, api_key=args.api_key
+        )
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    def on_change(data: dict) -> None:
+        print(json.dumps(data, ensure_ascii=False), flush=True)
+
+    backend.on_remote_change = on_change
+    backend.start_watching()
+    print(f"Watching {args.app_name!r} on {args.remote} (Ctrl+C to stop)", file=sys.stderr)
+    try:
+        threading.Event().wait()  # sleep until interrupted
+    except KeyboardInterrupt:
+        pass
+    finally:
+        backend.close()
+    return 0
 
 
 def main_cli() -> int:
@@ -517,12 +734,15 @@ def main_cli() -> int:
         "delete": cmd_delete,
         "validate": cmd_validate,
         "init": cmd_init,
+        "apps": cmd_apps,
+        "schema": cmd_schema,
+        "watch": cmd_watch,
     }
 
     if args.command in commands:
         return commands[args.command](args)
     else:
-        print(f"Unknown command: {args.command}")
+        print(f"Unknown command: {args.command}", file=sys.stderr)
         return 1
 
 

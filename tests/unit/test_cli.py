@@ -151,7 +151,7 @@ def test_cmd_set_local_schema_violation_returns_error(tmp_path, tmp_schema, caps
     args = Namespace(config=str(path), schema=str(tmp_schema), key="database.port",
                      value="not-an-int", remote=None, app_name="default", api_key=None)
     assert cmd_set(args) == 1
-    assert "Error:" in capsys.readouterr().out
+    assert "Error:" in capsys.readouterr().err
 
 
 def test_cmd_delete_local_found_and_missing(tmp_yaml, capsys):
@@ -162,8 +162,8 @@ def test_cmd_delete_local_found_and_missing(tmp_yaml, capsys):
 
     missing = Namespace(config=str(tmp_yaml), schema=None, key="nope.gone",
                         remote=None, app_name="default", api_key=None)
-    assert cmd_delete(missing) == 0
-    assert "not found" in capsys.readouterr().out
+    assert cmd_delete(missing) == 1
+    assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ def test_cmd_get_remote_error_status_returns_1(monkeypatch, capsys):
     args = Namespace(config="c.yaml", key="k", format="raw", remote="http://s",
                      app_name="svc", api_key=None, show_revision=False)
     assert cmd_get(args) == 1
-    assert "kaboom" in capsys.readouterr().out
+    assert "kaboom" in capsys.readouterr().err
 
 
 def test_cmd_set_remote_sends_revision(monkeypatch, capsys):
@@ -215,7 +215,7 @@ def test_cmd_set_remote_error_returns_1(monkeypatch, capsys):
     args = Namespace(config="c.yaml", schema=None, key="k", value="1", remote="http://s",
                      app_name="svc", api_key=None, revision=None)
     assert cmd_set(args) == 1
-    assert "bad" in capsys.readouterr().out
+    assert "bad" in capsys.readouterr().err
 
 
 def test_cmd_get_remote_single_key(monkeypatch, capsys):
@@ -233,7 +233,7 @@ def test_cmd_set_remote_without_deps(monkeypatch, capsys):
     args = Namespace(config="c.yaml", schema=None, key="k", value="1", remote="http://s",
                      app_name="svc", api_key=None, revision=None)
     assert cmd_set(args) == 1
-    assert "Remote connection requires" in capsys.readouterr().out
+    assert "Remote connection requires" in capsys.readouterr().err
 
 
 def test_cmd_delete_remote_without_deps(monkeypatch, capsys):
@@ -241,7 +241,7 @@ def test_cmd_delete_remote_without_deps(monkeypatch, capsys):
     args = Namespace(config="c.yaml", schema=None, key="k", remote="http://s",
                      app_name="svc", api_key=None, revision=None)
     assert cmd_delete(args) == 1
-    assert "Remote connection requires" in capsys.readouterr().out
+    assert "Remote connection requires" in capsys.readouterr().err
 
 
 def test_cmd_delete_local_handles_exception(monkeypatch, capsys):
@@ -252,7 +252,7 @@ def test_cmd_delete_local_handles_exception(monkeypatch, capsys):
     args = Namespace(config="c.yaml", schema=None, key="k", remote=None,
                      app_name="default", api_key=None)
     assert cmd_delete(args) == 1
-    assert "Error: backend down" in capsys.readouterr().out
+    assert "Error: backend down" in capsys.readouterr().err
 
 
 def test_cmd_delete_remote_success(monkeypatch, capsys):
@@ -278,7 +278,7 @@ def test_cmd_delete_remote_reports_conflict(monkeypatch, capsys):
     args = Namespace(config="c.yaml", schema=None, key="old", remote="http://s",
                      app_name="svc", api_key="secret", revision=2)
     assert cmd_delete(args) == 1
-    assert "revision_conflict" in capsys.readouterr().out
+    assert "revision_conflict" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +297,7 @@ def test_cmd_validate_rejects_invalid_config(tmp_path, tmp_schema, capsys):
     args = Namespace(config=str(bad), schema=str(tmp_schema),
                      remote=None, app_name="default", api_key=None)
     assert cmd_validate(args) == 1
-    assert "Error:" in capsys.readouterr().out
+    assert "Error:" in capsys.readouterr().err
 
 
 def test_cmd_validate_lists_validation_errors(monkeypatch, capsys):
@@ -315,10 +315,17 @@ def test_cmd_validate_lists_validation_errors(monkeypatch, capsys):
 
 def test_cmd_validate_without_schema_deps(monkeypatch, capsys):
     monkeypatch.setattr(cli, "HAS_SCHEMA_DEPS", False)
+    args = Namespace(config="c.yaml", schema="s.json", remote=None,
+                     app_name="default", api_key=None)
+    assert cmd_validate(args) == 1
+    assert "Schema validation requires" in capsys.readouterr().err
+
+
+def test_cmd_validate_requires_schema_without_remote(capsys):
     args = Namespace(config="c.yaml", schema=None, remote=None,
                      app_name="default", api_key=None)
     assert cmd_validate(args) == 1
-    assert "Schema validation requires" in capsys.readouterr().out
+    assert "--schema is required" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +340,7 @@ def test_cmd_init_creates_from_template(tmp_path, capsys):
 
 def test_cmd_init_refuses_existing_file(tmp_yaml, capsys):
     assert cmd_init(Namespace(config=str(tmp_yaml), template="default")) == 1
-    assert "already exists" in capsys.readouterr().out
+    assert "already exists" in capsys.readouterr().err
 
 
 def test_init_rejects_unknown_template_at_parse_time(tmp_path):
@@ -348,7 +355,7 @@ def test_cmd_init_handles_write_error(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "save_file", boom)
     assert cmd_init(Namespace(config=str(tmp_path / "y.yaml"), template="default")) == 1
-    assert "Error:" in capsys.readouterr().out
+    assert "Error:" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +395,7 @@ def test_cmd_server_loads_config_into_an_app(monkeypatch, tmp_yaml):
 def test_cmd_server_without_server_deps(monkeypatch, capsys):
     monkeypatch.setattr(cli, "HAS_SERVER_DEPS", False)
     assert cmd_server(_server_args()) == 1
-    assert "Server features require" in capsys.readouterr().out
+    assert "Server features require" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -419,3 +426,160 @@ def test_cli_package_entrypoint(monkeypatch):
 
     monkeypatch.setattr("sys.argv", ["nacho"])
     assert pkg_main_cli() == 1
+
+
+# ---------------------------------------------------------------------------
+# cmd_apps / cmd_schema / cmd_watch
+# ---------------------------------------------------------------------------
+from nacho.cli.main import cmd_apps, cmd_schema, cmd_watch  # noqa: E402
+
+
+def _fake_request(monkeypatch, responses):
+    """Route requests.request(method, url, ...) to canned FakeResponses."""
+    import requests
+
+    calls = []
+
+    def fake(method, url, json=None, params=None, headers=None, timeout=None):
+        calls.append({"method": method, "url": url, "json": json, "params": params})
+        for matcher, resp in responses:
+            if url.rstrip("/").endswith(matcher):
+                return resp
+        return FakeResponse(200, {})
+
+    monkeypatch.setattr(requests, "request", fake)
+    return calls
+
+
+def test_apps_list_human_output(monkeypatch, capsys):
+    _fake_request(monkeypatch, [("/api/apps", FakeResponse(200, {"data": {
+        "svc": {"revision": 3, "config_count": 2, "schema": True, "description": "core"},
+        "empty": {"revision": 1, "config_count": 0, "schema": False},
+    }}))])
+    args = Namespace(apps_command="list", remote="http://s", api_key=None, format="raw")
+    assert cmd_apps(args) == 0
+    out = capsys.readouterr().out
+    assert "svc" in out and "rev 3" in out and "schema" in out and "core" in out
+
+
+def test_apps_list_json_output(monkeypatch, capsys):
+    _fake_request(monkeypatch, [("/api/apps", FakeResponse(200, {"data": {"svc": {"revision": 1}}}))])
+    args = Namespace(apps_command="list", remote="http://s", api_key=None, format="json")
+    assert cmd_apps(args) == 0
+    assert json.loads(capsys.readouterr().out)["svc"]["revision"] == 1
+
+
+def test_apps_create_sends_schema_and_config(monkeypatch, tmp_path, capsys):
+    schema_file = tmp_path / "s.json"
+    schema_file.write_text('{"type": "object"}')
+    config_file = tmp_path / "c.json"
+    config_file.write_text('{"x": 1}')
+    calls = _fake_request(monkeypatch, [("/api/apps", FakeResponse(201, {"app": {"revision": 1}}))])
+    args = Namespace(apps_command="create", name="svc", remote="http://s", api_key=None,
+                     description="desc", schema=str(schema_file), config=str(config_file))
+    assert cmd_apps(args) == 0
+    assert "Created app 'svc'" in capsys.readouterr().out
+    body = calls[0]["json"]
+    assert body["schema"] == {"type": "object"} and body["data"] == {"x": 1}
+
+
+def test_apps_delete(monkeypatch, capsys):
+    _fake_request(monkeypatch, [("/api/apps/svc", FakeResponse(200, {"message": "gone"}))])
+    args = Namespace(apps_command="delete", name="svc", remote="http://s", api_key=None)
+    assert cmd_apps(args) == 0
+    assert "Deleted app 'svc'" in capsys.readouterr().out
+
+
+def test_apps_error_goes_to_stderr(monkeypatch, capsys):
+    _fake_request(monkeypatch, [("/api/apps", FakeResponse(401, {"detail": "Unauthorized"}))])
+    args = Namespace(apps_command="list", remote="http://s", api_key=None, format="raw")
+    assert cmd_apps(args) == 1
+    assert "Unauthorized" in capsys.readouterr().err
+
+
+def test_schema_get_prints_schema(monkeypatch, capsys):
+    _fake_request(monkeypatch, [("/api/apps/svc/schema",
+                                 FakeResponse(200, {"data": {"type": "object"}}))])
+    args = Namespace(schema_command="get", remote="http://s", app_name="svc",
+                     api_key=None, format="json")
+    assert cmd_schema(args) == 0
+    assert json.loads(capsys.readouterr().out) == {"type": "object"}
+
+
+def test_schema_push_uploads_file(monkeypatch, tmp_path, capsys):
+    schema_file = tmp_path / "s.json"
+    schema_file.write_text('{"type": "object"}')
+    calls = _fake_request(monkeypatch, [("/api/apps/svc/schema",
+                                         FakeResponse(200, {"revision": 5}))])
+    args = Namespace(schema_command="push", schema_file=str(schema_file), remote="http://s",
+                     app_name="svc", api_key=None, revision=4)
+    assert cmd_schema(args) == 0
+    assert "revision 5" in capsys.readouterr().out
+    assert calls[0]["json"] == {"schema": {"type": "object"}, "revision": 4}
+
+
+def test_schema_push_missing_file(capsys):
+    args = Namespace(schema_command="push", schema_file="/nope/s.json", remote="http://s",
+                     app_name="svc", api_key=None, revision=None)
+    assert cmd_schema(args) == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_watch_streams_updates(monkeypatch, capsys):
+    class FakeBackend:
+        def __init__(self, url, app_name, api_key):
+            self.on_remote_change = None
+
+        def start_watching(self):
+            self.on_remote_change({"x": 1})
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("nacho.storage.remote.RemoteStorageBackend", FakeBackend)
+    monkeypatch.setattr("threading.Event.wait",
+                        lambda self, timeout=None: (_ for _ in ()).throw(KeyboardInterrupt()))
+    args = Namespace(remote="http://s", app_name="svc", api_key=None)
+    assert cmd_watch(args) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out.strip()) == {"x": 1}
+    assert "Watching" in captured.err
+
+
+def test_cmd_watch_connect_failure(monkeypatch, capsys):
+    def boom(**kwargs):
+        raise RuntimeError("refused")
+
+    monkeypatch.setattr("nacho.storage.remote.RemoteStorageBackend", boom)
+    args = Namespace(remote="http://s", app_name="svc", api_key=None)
+    assert cmd_watch(args) == 1
+    assert "refused" in capsys.readouterr().err
+
+
+def test_parser_accepts_new_subcommands():
+    parser = create_parser()
+    a = parser.parse_args(["apps", "list", "--remote", "http://s"])
+    assert a.command == "apps" and a.apps_command == "list"
+    a = parser.parse_args(["schema", "push", "s.json", "--remote", "http://s"])
+    assert a.command == "schema" and a.schema_file == "s.json"
+    a = parser.parse_args(["watch", "--remote", "http://s", "--app-name", "svc"])
+    assert a.command == "watch" and a.app_name == "svc"
+
+
+def test_validate_remote_uses_server_schema(monkeypatch, tmp_yaml, capsys):
+    calls = _fake_request(monkeypatch, [("/api/apps/svc/validate",
+                                         FakeResponse(200, {"valid": True, "errors": []}))])
+    args = Namespace(config=str(tmp_yaml), schema=None, remote="http://s",
+                     app_name="svc", api_key=None)
+    assert cmd_validate(args) == 0
+    assert "successful" in capsys.readouterr().out
+    assert calls[0]["json"]["data"]["database"]["host"] == "localhost"
+
+
+def test_validate_remote_reports_errors(monkeypatch, tmp_yaml, capsys):
+    _fake_request(monkeypatch, [("/api/apps/svc/validate",
+                                 FakeResponse(200, {"valid": False, "errors": ["port: bad"]}))])
+    args = Namespace(config=str(tmp_yaml), schema=None, remote="http://s",
+                     app_name="svc", api_key=None)
+    assert cmd_validate(args) == 1
+    assert "port: bad" in capsys.readouterr().out

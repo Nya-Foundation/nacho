@@ -513,6 +513,10 @@ nacho --version
 
 ### Server
 
+The server binds to `127.0.0.1` by default; pass `--host 0.0.0.0` to accept
+connections from other machines (the CLI warns if you do that without
+`--api-key`).
+
 ```bash
 nacho server \
   --config config.yaml \
@@ -552,6 +556,47 @@ nacho delete legacy.setting \
   --app-name my-service \
   --api-key "secure-key" \
   --revision 4
+```
+
+### App management
+
+```bash
+# List apps on the server
+nacho apps list --remote http://config-server:8000 --api-key "secure-key"
+
+# Create an app, optionally seeding config and schema from local files
+nacho apps create my-service \
+  --remote http://config-server:8000 \
+  --description "Core service" \
+  --config config.yaml \
+  --schema schema.json
+
+# Delete an app
+nacho apps delete my-service --remote http://config-server:8000
+```
+
+### Schema management
+
+```bash
+# Print the schema the server enforces for an app
+nacho schema get --remote http://config-server:8000 --app-name my-service
+
+# Upload a new schema (conflict-safe with --revision)
+nacho schema push schema.json \
+  --remote http://config-server:8000 \
+  --app-name my-service \
+  --revision 3
+
+# Validate a local config file against the server's stored schema
+nacho validate --config config.yaml \
+  --remote http://config-server:8000 --app-name my-service
+```
+
+### Live updates
+
+```bash
+# Stream an app's config: prints the current config, then one JSON line per change
+nacho watch --remote http://config-server:8000 --app-name my-service
 ```
 
 ### Local configuration

@@ -57,10 +57,12 @@ class ConfigRequest(BaseModel):
     )
 
 
-class AppCreateRequest(ConfigRequest):
-    """Create or replace an app."""
+class AppReplaceRequest(ConfigRequest):
+    """Replace an app's config, schema, and description.
 
-    name: str = Field(..., min_length=1, max_length=64)
+    Renaming is done via PATCH /api/apps/{name}/metadata, not here.
+    """
+
     description: Optional[str] = Field(default=None, max_length=256)
     schema_: Optional[Union[str, Dict[str, Any]]] = Field(
         default=None,
@@ -70,15 +72,21 @@ class AppCreateRequest(ConfigRequest):
     schema_format: str = Field(default="json", description="json, yaml, or toml")
     model_config = ConfigDict(populate_by_name=True)
 
-    @field_validator("name")
-    @classmethod
-    def validate_name(cls, value: str) -> str:
-        return validate_app_name(value)
-
     @field_validator("schema_format")
     @classmethod
     def validate_schema_format(cls, value: str) -> str:
         return normalize_format(value)
+
+
+class AppCreateRequest(AppReplaceRequest):
+    """Create an app."""
+
+    name: str = Field(..., min_length=1, max_length=64)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return validate_app_name(value)
 
 
 class ConvertRequest(BaseModel):
