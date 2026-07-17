@@ -1,78 +1,51 @@
-# Use a pinned Python Alpine base for a small, repeatable image.
-FROM python:3.13-alpine AS builder
+# Build stage: resolve locked dependencies with uv, install into /opt/venv.
+FROM python:3.14-alpine AS builder
 
-# Set working directory
+COPY --from=ghcr.io/astral-sh/uv:0.7.9 /uv /usr/local/bin/uv
+
 WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off \
-    PIP_DISABLE_PIP_VERSION_CHECK=on
+# Dependency layer — cached until pyproject.toml or uv.lock change.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project \
+    --extra server --extra schema --extra remote
 
-# Install build dependencies
-RUN apk add --no-cache \
-    gcc \
-    musl-dev
-
-# Create and use a virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Install dependencies first (own layer, cached until pyproject.toml changes)
-COPY pyproject.toml .
-RUN pip install --upgrade pip && \
-    pip install -e .[server,schema,remote]
-
-# Copy the source code and install the package itself
+# Project layer — non-editable install so the venv is fully self-contained.
 COPY . .
-RUN pip install --no-cache-dir .[server,schema,remote]
+RUN uv sync --frozen --no-dev --no-editable \
+    --extra server --extra schema --extra remote
 
-# Create a non-privileged system user and group for running the application
-RUN addgroup -S nacho && \
-    adduser -S -G nacho -s /sbin/nologin -h /app -g "Non-privileged app user" nacho
+# Runtime stage: just Python, the venv, and a non-root user.
+FROM python:3.14-alpine AS runtime
 
-# Create a runtime stage to minimize the final image size
-FROM python:3.13-alpine AS runtime
-
-# Add image metadata
 LABEL org.opencontainers.image.description="Nacho: lightweight schema-first dynamic configuration" \
       org.opencontainers.image.source="https://github.com/Nya-Foundation/nacho" \
       org.opencontainers.image.licenses="MIT"
 
-
-# Set working directory
-WORKDIR /app
-
-# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
-# Create the same user in the runtime image
 RUN addgroup -S nacho && \
     adduser -S -G nacho -s /sbin/nologin -h /app -g "Non-privileged app user" nacho
 
-# Copy virtual environment from builder stage
 COPY --from=builder /opt/venv /opt/venv
 
-# Copy the application from the builder stage
-COPY --from=builder /app /app
-
-# Set proper ownership
-RUN chown -R nacho:nacho /app
-
-# Switch to non-root user
+# Empty writable workdir: the default command creates config.yaml here, and
+# users mount their own config over it.
+WORKDIR /app
+RUN chown nacho:nacho /app
 USER nacho
 
-# Expose the Nacho API port
 EXPOSE 8000
 
-# Container-level health probe against the public /health endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
 
-# Command to run the application with the correct module path.
 # --host 0.0.0.0 is required inside a container (the CLI default is loopback).
 ENTRYPOINT ["nacho"]
 CMD ["server", "--host", "0.0.0.0", "--config", "config.yaml"]

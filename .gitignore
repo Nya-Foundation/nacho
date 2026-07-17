@@ -180,8 +180,8 @@ config.yaml
 .flake8
 
 # AI workflow
-.agents
-.claude
-.codex
+.agents/
+.claude/
+.codex/
 
-.serena
+.serena/
