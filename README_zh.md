@@ -134,6 +134,7 @@ nacho server \
 | `--app-name` | `default` | `--config` 文件对应的应用名称 |
 | `--data-dir` | 无 | 存放通过 API 创建的应用状态和历史记录的目录 |
 | `--api-key` | 无 | 启用 Bearer Token 认证 |
+| `--read-only-api-key` | 无 | 额外的只读访问密钥 |
 | `--history-limit` | `50` | 每个应用保留的修订版本快照数量（`0` 表示禁用历史记录） |
 | `--read-only` | 关闭 | 拒绝所有写入 |
 | `--reload` | 关闭 | 开发用的自动重载 |
@@ -174,6 +175,8 @@ app.mount("/config", orchestrator.app)   # 配置 API 位于 /config 之下
 ### 认证
 
 传入 `--api-key`（或向 `NachoOrchestrator` 传入 `api_key=`）即可为整个 API 启用 Bearer 认证。客户端通过 `Authorization: Bearer <key>` 请求头发送密钥，或使用 UI 为其自身 WebSocket 握手设置的 Cookie。密钥缺失或错误的请求会收到 `401 Unauthorized`。密钥比较采用时序安全（timing-safe）算法。
+
+还可以通过 `--read-only-api-key`（或 `read_only_api_key=`）配置第二个密钥。它可以认证 GET 请求和 WebSocket 订阅，但任何写操作都会收到 `403 Forbidden` —— 把它交给仪表盘、轮询器和只消费配置的服务，写密钥就不会离开真正需要它的运维人员。
 
 `/`、`/health`、`/ui`、`/docs`、`/redoc` 和 `/openapi.json` 保持公开：API 的接口定义并不是秘密，需要保护的只是其背后的数据。
 
@@ -216,6 +219,12 @@ curl -X PUT http://127.0.0.1:8000/api/apps/my-service/config/cache.ttl \
 ```
 
 省略 `revision` 则执行无条件写入。
+
+`ETag` 还支持低成本轮询：将其作为 `If-None-Match` 发回，在修订号变化之前服务器都会返回 `304 Not Modified`（无响应体）。
+
+```bash
+curl -H 'If-None-Match: "3"' http://127.0.0.1:8000/api/apps/my-service/config
+```
 
 ### 历史与回滚
 
@@ -561,6 +570,10 @@ nacho validate --config config.yaml --schema schema.json
 ```bash
 nacho history list --remote http://config-server:8000 --app-name my-service
 nacho history show 41 --remote http://config-server:8000 --app-name my-service
+
+# 查看两个修订之间的差异 —— 或修订 41 与当前配置的差异
+nacho history diff 41 42 --remote http://config-server:8000 --app-name my-service
+nacho history diff 41 --remote http://config-server:8000 --app-name my-service
 
 # 将修订版本 41 恢复为新的修订版本；--revision-check 使其具备防冲突能力
 nacho rollback 41 --remote http://config-server:8000 --app-name my-service --revision-check 42

@@ -151,6 +151,7 @@ missed live updates.
 | `--app-name` | `default` | App name for the `--config` file |
 | `--data-dir` | none | Directory for API-created app state and history |
 | `--api-key` | none | Enable bearer-token authentication |
+| `--read-only-api-key` | none | Additional key granting read access only |
 | `--history-limit` | `50` | Revision snapshots kept per app (`0` disables history) |
 | `--read-only` | off | Reject every write |
 | `--reload` | off | Auto-reload for development |
@@ -206,6 +207,12 @@ authentication for the whole API. Clients send the key either as an
 its own WebSocket handshake. Requests with a missing or wrong key receive
 `401 Unauthorized`. The comparison is timing-safe.
 
+A second key can be added with `--read-only-api-key` (or
+`read_only_api_key=`). It authenticates GETs and WebSocket subscriptions but
+receives `403 Forbidden` on any write — hand it to dashboards, pollers, and
+services that only consume configuration, so the write credential never
+leaves the operators who need it.
+
 `/`, `/health`, `/ui`, `/docs`, `/redoc`, and `/openapi.json` stay public: the
 API surface is not a secret, only the data behind it.
 
@@ -257,6 +264,13 @@ curl -X PUT http://127.0.0.1:8000/api/apps/my-service/config/cache.ttl \
 ```
 
 Omitting `revision` performs an unconditional write.
+
+The `ETag` also enables cheap polling: send it back as `If-None-Match` and
+the server answers `304 Not Modified` — no body — until the revision moves.
+
+```bash
+curl -H 'If-None-Match: "3"' http://127.0.0.1:8000/api/apps/my-service/config
+```
 
 ### History and rollback
 
@@ -660,6 +674,10 @@ nacho validate --config config.yaml --schema schema.json
 ```bash
 nacho history list --remote http://config-server:8000 --app-name my-service
 nacho history show 41 --remote http://config-server:8000 --app-name my-service
+
+# What changed between two revisions — or between revision 41 and now
+nacho history diff 41 42 --remote http://config-server:8000 --app-name my-service
+nacho history diff 41 --remote http://config-server:8000 --app-name my-service
 
 # Restore revision 41 as a new revision; --revision-check makes it conflict-safe
 nacho rollback 41 --remote http://config-server:8000 --app-name my-service --revision-check 42

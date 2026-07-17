@@ -151,6 +151,7 @@ nacho server \
 | `--app-name` | `default` | `--config` ファイルのアプリ名 |
 | `--data-dir` | なし | API で作成されたアプリの状態と履歴を保存するディレクトリ |
 | `--api-key` | なし | ベアラートークン認証を有効化 |
+| `--read-only-api-key` | なし | 読み取り専用アクセスを許可する追加キー |
 | `--history-limit` | `50` | アプリごとに保持するリビジョンスナップショット数（`0` で履歴を無効化） |
 | `--read-only` | オフ | すべての書き込みを拒否 |
 | `--reload` | オフ | 開発用の自動リロード |
@@ -209,6 +210,12 @@ WebSocket ハンドシェイク用に設定する Cookie を通じて送信し�
 欠落または誤っているリクエストには `401 Unauthorized` が返されます。
 キーの比較はタイミングセーフです。
 
+`--read-only-api-key`（または `read_only_api_key=`）で 2 つ目のキーを追加
+できます。このキーは GET と WebSocket 購読を認証しますが、書き込みには
+`403 Forbidden` が返されます。ダッシュボードやポーラー、設定を読むだけの
+サービスにはこちらを渡すことで、書き込みクレデンシャルを必要な運用者の
+手元だけに留められます。
+
 `/`、`/health`、`/ui`、`/docs`、`/redoc`、`/openapi.json` は公開のままです:
 秘密にすべきは API の存在ではなく、その背後にあるデータだからです。
 
@@ -262,6 +269,13 @@ curl -X PUT http://127.0.0.1:8000/api/apps/my-service/config/cache.ttl \
 ```
 
 `revision` を省略すると、無条件の書き込みになります。
+
+`ETag` は低コストなポーリングにも使えます。`If-None-Match` として送り返すと、
+リビジョンが動くまでサーバーはボディなしの `304 Not Modified` を返します。
+
+```bash
+curl -H 'If-None-Match: "3"' http://127.0.0.1:8000/api/apps/my-service/config
+```
 
 ### 履歴とロールバック
 
@@ -674,6 +688,10 @@ nacho validate --config config.yaml --schema schema.json
 ```bash
 nacho history list --remote http://config-server:8000 --app-name my-service
 nacho history show 41 --remote http://config-server:8000 --app-name my-service
+
+# 2 つのリビジョン間の差分 — またはリビジョン 41 と現在の設定との差分
+nacho history diff 41 42 --remote http://config-server:8000 --app-name my-service
+nacho history diff 41 --remote http://config-server:8000 --app-name my-service
 
 # リビジョン 41 を新しいリビジョンとして復元。--revision-check で競合安全にする
 nacho rollback 41 --remote http://config-server:8000 --app-name my-service --revision-check 42
