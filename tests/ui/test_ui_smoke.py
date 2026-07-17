@@ -199,9 +199,6 @@ def test_active_tab_reclick_keeps_edits(make_live_server, new_page):
     open_app_view(page, server.url)
     select_default_app(page)
 
-    dialogs = []
-    page.on("dialog", lambda d: (dialogs.append(d.message), d.dismiss()))
-
     page.fill(EDITOR, '{"keep": "me"}')
     expect(page.locator("#editor-status")).to_have_text("● Unsaved changes")
 
@@ -209,7 +206,8 @@ def test_active_tab_reclick_keeps_edits(make_live_server, new_page):
 
     expect(page.locator(EDITOR)).to_have_value('{"keep": "me"}')
     expect(page.locator("#editor-status")).to_have_text("● Unsaved changes")
-    assert dialogs == [], f"unexpected confirm dialog(s): {dialogs}"
+    # A no-op re-click must not raise the discard-confirm dialog.
+    expect(page.locator("#confirm-dialog")).to_have_count(0)
 
 
 def test_history_lists_revisions_and_restore(make_live_server, new_page):
@@ -229,9 +227,10 @@ def test_history_lists_revisions_and_restore(make_live_server, new_page):
     expect(rows).to_have_count(3)
     expect(page.locator("#history-body")).to_contain_text("r3 (current)")
 
-    # Restore revision 2 ({"step": 1}); the confirm() must be accepted.
-    page.on("dialog", lambda d: d.accept())
+    # Restore revision 2 ({"step": 1}) via the styled confirm dialog.
     page.click('#history-body [data-restore="2"]')
+    expect(page.locator("#confirm-dialog")).to_be_visible()
+    page.click("#confirm-accept")
 
     # A rollback is a NEW revision (r4) that becomes current.
     expect(page.locator("#history-body")).to_contain_text("r4 (current)")

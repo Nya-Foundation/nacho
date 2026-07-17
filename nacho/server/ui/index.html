@@ -450,6 +450,7 @@ h1, h2, h3 { margin: 0; }
 .field-head .lbl { margin-bottom: 0; }
 .field-hint { font-size: 12px; color: var(--faint); margin: 6px 0 0; }
 .opt { color: var(--faint); }
+.confirm-body { font-size: 13px; color: var(--muted); margin: 0; }
 .modal-error { font-size: 13px; color: var(--danger); min-height: 18px; margin-top: 4px; }
 .modal-actions {
   display: flex; justify-content: flex-end; align-items: center;
@@ -913,8 +914,8 @@ $("key-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("connect-btn").click();
 });
 
-$("disconnect-btn").onclick = () => {
-  if (!confirmDiscard()) return;
+$("disconnect-btn").onclick = async () => {
+  if (!(await confirmDiscard())) return;
   closeWs();
   clearInterval(state.appsPoll);
   state.apiKey = "";
@@ -996,7 +997,7 @@ function clearDrafts() {
 
 async function selectApp(name) {
   if (state.selected === name) return;
-  if (!confirmDiscard()) return;
+  if (!(await confirmDiscard())) return;
   clearDrafts();
   state.selected = name;
   renderAppList();
@@ -1146,7 +1147,7 @@ function renderConfigTab(text) {
   $("format-btn").onclick = formatConfig;
   $("validate-btn").onclick = validateConfig;
   $("refresh-link").onclick = () => loadAppDetail(state.selected);
-  $("discard-link").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
+  $("discard-link").onclick = async () => { if (await confirmDiscard()) loadAppDetail(state.selected); };
   const save = $("save-btn");
   if (save) save.onclick = saveConfig;
   updateDirty();
@@ -1206,7 +1207,7 @@ function renderSchemaTab(text) {
   $("schema-format-btn").onclick = formatSchema;
   $("schema-clear-btn").onclick = () => { schemaEd.value = ""; updateSchemaDirty(); };
   $("schema-refresh-link").onclick = () => loadAppDetail(state.selected);
-  $("schema-discard-link").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
+  $("schema-discard-link").onclick = async () => { if (await confirmDiscard()) loadAppDetail(state.selected); };
   const save = $("schema-save-btn");
   if (save) save.onclick = saveSchema;
   updateSchemaDirty();
@@ -1305,10 +1306,13 @@ async function toggleHistorySnapshot(revision, tr) {
 }
 
 async function restoreHistorySnapshot(revision) {
-  if (anyDirty() && !confirmDiscard()) return;
-  if (!confirm("Restore r" + revision + "? Config and schema from revision " +
-      revision + " become a new revision. History is never rewritten — " +
-      "this rollback can itself be rolled back.")) return;
+  if (anyDirty() && !(await confirmDiscard())) return;
+  if (!(await confirmDialog({
+    title: "Restore revision " + revision + "?",
+    body: "This creates a new revision with r" + revision + "'s config and " +
+      "schema. History is never rewritten — this rollback can itself be rolled back.",
+    confirmLabel: "Restore",
+  }))) return;
   try {
     await api("POST",
       "/api/apps/" + encodeURIComponent(state.selected) + "/rollback",
@@ -1380,9 +1384,19 @@ function updateSchemaDirty() {
   updateTabDots();
 }
 
-function confirmDiscard() {
+async function confirmDiscard() {
   if (!anyDirty()) return true;
-  return confirm("You have unsaved changes. Discard them?");
+  const parts = [];
+  if (configDraftDirty()) parts.push("configuration");
+  if (schemaDraftDirty()) parts.push("schema");
+  return confirmDialog({
+    title: "Discard unsaved changes?",
+    body: 'Unsaved ' + parts.join(" and ") + ' edits to "' + state.selected +
+      '" will be lost.',
+    confirmLabel: "Discard",
+    cancelLabel: "Keep editing",
+    danger: true,
+  });
 }
 
 /* ----- Configuration actions ----- */
@@ -1509,8 +1523,13 @@ function applyRevision(rev) {
 
 async function deleteApp() {
   const name = state.selected;
-  if (!confirm('Delete "' + name + '"? The app, its config, and its history ' +
-      "are removed. This cannot be undone.")) return;
+  if (!(await confirmDialog({
+    title: 'Delete "' + name + '"?',
+    body: "This removes the app, its history, and disconnects its watchers. " +
+      "It cannot be undone.",
+    confirmLabel: "Delete",
+    danger: true,
+  }))) return;
   try {
     await api("DELETE", "/api/apps/" + encodeURIComponent(name));
     closeWs();
@@ -1605,12 +1624,13 @@ async function onRemoteUpdate(msg) {
       "This app changed on the server (now r" + esc(msg.revision) + "). " +
       "Your unsaved edits are untouched; saving will report a conflict." +
       ' <button class="link" id="accept-remote">Load server version</button>');
+    const acceptRemote = async () => { if (await confirmDiscard()) loadAppDetail(state.selected); };
     if (state.activeTab === "config" && configEd) {
       configNotice(warn);
-      $("accept-remote").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
+      $("accept-remote").onclick = acceptRemote;
     } else if (state.activeTab === "schema" && schemaEd) {
       schemaNotice(warn);
-      $("accept-remote").onclick = () => { if (confirmDiscard()) loadAppDetail(state.selected); };
+      $("accept-remote").onclick = acceptRemote;
     }
     return;
   }
@@ -1677,6 +1697,51 @@ function openModal(html) {
 function closeModal() {
   $("modal-overlay").classList.add("hidden");
   $("modal-overlay").innerHTML = "";
+}
+
+/* Styled promise-based confirm — replaces every native confirm(). Cancel is
+   a text link, confirm an ink-stamp button (danger fill when destructive). */
+function confirmDialog(opts) {
+  return new Promise((resolve) => {
+    const invoker = document.activeElement;
+    const ov = $("modal-overlay");
+    ov.innerHTML =
+      '<div class="modal" id="confirm-dialog" role="dialog" aria-modal="true"' +
+      ' aria-labelledby="confirm-title">' +
+      '<h3 id="confirm-title">' + esc(opts.title) + "</h3>" +
+      '<p class="confirm-body">' + esc(opts.body || "") + "</p>" +
+      '<div class="modal-actions">' +
+      '<button class="link" id="confirm-cancel">' + esc(opts.cancelLabel || "Cancel") + "</button>" +
+      '<button class="btn' + (opts.danger ? " danger" : "") + '" id="confirm-accept">' +
+      esc(opts.confirmLabel || "OK") + "</button>" +
+      "</div></div>";
+    ov.classList.remove("hidden");
+    let settled = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      closeModal();
+      ov.onkeydown = null;
+      ov.onclick = null;
+      // Restore focus to the invoking element (if it survived the dialog).
+      if (invoker && invoker.isConnected && invoker.focus) invoker.focus();
+      resolve(val);
+    };
+    ov.onclick = (e) => { if (e.target === ov) done(false); };
+    $("confirm-cancel").onclick = () => done(false);
+    $("confirm-accept").onclick = () => done(true);
+    // Escape cancels; Tab is trapped between the two actions. Enter on the
+    // focused button activates it natively.
+    ov.onkeydown = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); done(false); return; }
+      if (e.key !== "Tab") return;
+      e.preventDefault();
+      const cancel = $("confirm-cancel"), accept = $("confirm-accept");
+      (document.activeElement === accept ? cancel : accept).focus();
+    };
+    if (invoker && invoker.blur) invoker.blur();
+    $("confirm-accept").focus();
+  });
 }
 
 // Convert a plain modal textarea between formats, tracking the current format
@@ -1810,7 +1875,12 @@ async function saveMeta() {
 
 $("new-app-btn").onclick = openNewAppModal;
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("modal-overlay").classList.contains("hidden")) closeModal();
+  if (e.key !== "Escape" || $("modal-overlay").classList.contains("hidden")) return;
+  // A confirm dialog must resolve its promise — cancel it rather than
+  // tearing the overlay down around it.
+  const cancel = $("confirm-cancel");
+  if (cancel) cancel.click();
+  else closeModal();
 });
 window.addEventListener("beforeunload", (e) => {
   if (anyDirty()) { e.preventDefault(); e.returnValue = ""; }
