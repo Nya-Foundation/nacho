@@ -110,6 +110,27 @@ def test_ui_loads_without_auth(make_live_server, new_page):
     expect(page.locator("#app-view")).to_be_visible()
     expect(page.locator("#connect-view")).to_be_hidden()
     expect(page.locator("#app-list .app-item .app-name")).to_have_text("default")
+    # An open server has no session to end; sending users to the API-key form
+    # here would be a dead end. API docs remain directly available.
+    expect(page.locator("#disconnect-btn")).to_be_hidden()
+    expect(page.locator("#docs-link")).to_have_attribute("href", "docs")
+
+
+def test_desktop_app_navigation_collapses_and_persists(make_live_server, new_page):
+    """The app index can get out of the way for wide configuration editing."""
+    server = make_live_server()
+    page = new_page()
+    open_app_view(page, server.url)
+
+    expect(page.locator("#nav-toggle")).to_have_attribute("aria-expanded", "true")
+    page.click("#nav-toggle")
+    expect(page.locator("#nav-toggle")).to_have_attribute("aria-expanded", "false")
+    expect(page.locator("#app-index")).to_have_css("visibility", "hidden")
+
+    page.reload()
+    expect(page.locator("#app-view")).to_be_visible()
+    expect(page.locator("#nav-toggle")).to_have_attribute("aria-expanded", "false")
+    expect(page.locator("#app-index")).to_have_css("visibility", "hidden")
 
 
 def test_auth_flow_wrong_then_right_key(make_live_server, new_page):
@@ -129,6 +150,7 @@ def test_auth_flow_wrong_then_right_key(make_live_server, new_page):
     page.click("#connect-btn")
     expect(page.locator("#app-view")).to_be_visible()
     expect(page.locator("#app-list .app-item .app-name")).to_have_text("default")
+    expect(page.locator("#disconnect-btn")).to_be_visible()
 
 
 def test_auth_key_with_cookie_hostile_chars(make_live_server, new_page):
