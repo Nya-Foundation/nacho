@@ -237,7 +237,7 @@ curl -X POST http://127.0.0.1:8000/api/apps \
 
 ### 修订版本与乐观并发控制
 
-每个应用都带有一个单调递增的修订版本号，每次成功写入后递增。对 `/config` 的读取（完整或按路径）会在 `ETag` 和 `X-Nacho-Revision` 响应头中返回当前修订版本。写入时可以包含 `revision` 字段，声明客户端最后看到的修订版本；如果服务器端的版本已经前进，写入将以 `409 Conflict` 失败，已存储的配置保持不变：
+每个应用都带有一个单调递增的修订版本号，每次成功写入后递增。对 `/config` 的读取会在 `X-Nacho-Revision` 中返回当前修订版本；`X-Nacho-Generation` 标识当前服务器进程，`ETag` 则组合这两个值。写入时可以包含 `revision` 字段，声明客户端最后看到的修订版本；如果服务器端的版本已经前进，写入将以 `409 Conflict` 失败，已存储的配置保持不变：
 
 ```bash
 curl -X PUT http://127.0.0.1:8000/api/apps/my-service/config/cache.ttl \
@@ -251,7 +251,7 @@ curl -X PUT http://127.0.0.1:8000/api/apps/my-service/config/cache.ttl \
 `ETag` 还支持低成本轮询：将其作为 `If-None-Match` 发回，在修订号变化之前服务器都会返回 `304 Not Modified`（无响应体）。
 
 ```bash
-curl -H 'If-None-Match: "3"' http://127.0.0.1:8000/api/apps/my-service/config
+curl -H 'If-None-Match: "<generation>:3"' http://127.0.0.1:8000/api/apps/my-service/config
 ```
 
 ### 历史与回滚
@@ -317,7 +317,7 @@ curl -X POST http://127.0.0.1:8000/api/apps/my-service/rollback \
 |---|---|---|
 | `/ws/{app}` | WebSocket | 订阅时接收当前配置，之后接收每次变更 |
 
-该 WebSocket 仅用于接收：服务器在订阅时发送一条 `initial_config` 消息，之后每次变更发送一条 `update` 消息，每条消息都携带应用名称、修订版本和完整配置。写入始终通过 REST 进行，因此状态的归属永远不存在歧义。
+该 WebSocket 仅用于接收：服务器在订阅时发送一条 `initial_config` 消息，之后每次变更发送一条 `update` 消息。每条消息都携带服务器 generation、应用名称、修订版本、完整配置、schema 和当前元数据。generation 让客户端在临时服务器重启并重置修订号后安全恢复。写入始终通过 REST 进行。
 
 ## 远程客户端
 
@@ -648,6 +648,8 @@ docker run -p 8000:8000 \
 docker compose up --build
 ```
 
+Compose 默认只绑定到本机回环地址，并把服务器状态持久化到 `nacho-data` 卷。将端口暴露到其他机器之前，请配置 `--api-key`。
+
 镜像的入口点是 `nacho`；默认命令为 `server --host 0.0.0.0 --config config.yaml`。追加任意 `nacho server` 参数即可覆盖默认值。容器暴露端口 `8000`。
 
 ## 运维说明
@@ -655,6 +657,7 @@ docker compose up --build
 - 点分路径有意保持简单。键名中的字面量点号和数字字符串键会产生歧义；请优先使用嵌套对象键。
 - 内置的 API 密钥认证适用于本地、私有和单租户部署。共享的生产环境部署应在服务前端补充范围化令牌、审计日志和速率限制。
 - 服务器状态基于文件且为单进程。修订版本计数器以内存中的值为权威，因此每个数据目录只应运行一个服务器进程；如需多进程或高可用运行，存储抽象层就是实现更强后端的边界。
+- 新建的服务器状态和历史目录权限为 `0700`，其中的 JSON 文件权限为 `0600`；已有权限保持不变。
 - 服务器运行期间手工编辑 `--config` 文件不会被检测到；服务器的下一次写入会覆盖它。请通过 API、CLI 或 UI 进行修改。
 
 ## 开发

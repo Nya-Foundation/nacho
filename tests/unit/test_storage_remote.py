@@ -209,6 +209,42 @@ def test_stale_ws_revision_is_dropped(http):
     assert backend.revision == 5
 
 
+def test_new_server_generation_accepts_lower_initial_revision(http):
+    backend = RemoteStorageBackend("http://srv")
+    received = []
+    backend.on_remote_change = received.append
+    backend._on_message(
+        None,
+        json.dumps({"type": "update", "generation": "old", "revision": 5, "data": {"old": True}}),
+    )
+    backend._on_message(
+        None,
+        json.dumps({"type": "initial_config", "generation": "new", "revision": 1, "data": {}}),
+    )
+    assert received == [{"old": True}, {}]
+    assert backend.generation == "new"
+    assert backend.revision == 1
+
+
+def test_rest_generation_change_resets_revision_scope(http):
+    http["get"].append(
+        (
+            "/config",
+            FakeResponse(
+                200,
+                {"fresh": True},
+                headers={"X-Nacho-Revision": "1", "X-Nacho-Generation": "new"},
+            ),
+        )
+    )
+    backend = RemoteStorageBackend("http://srv")
+    backend._revision = 9
+    backend._generation = "old"
+    assert backend.load() == {"fresh": True}
+    assert backend.revision == 1
+    assert backend.generation == "new"
+
+
 def test_stale_rest_load_returns_newer_pushed_snapshot(http):
     http["get"].append(
         ("/config", FakeResponse(200, {"old": True}, headers={"X-Nacho-Revision": "3"}))
@@ -391,6 +427,8 @@ def test_ws_loop_gives_up_after_max_reconnects(backend, monkeypatch):
     backend._running = True
     backend._ws_loop()  # crash -> reconnect -> exceed limit -> give up
     assert len(calls) >= 2
+    assert backend._running is False
+    assert backend.watching is False
 
 
 def test_permanent_close_code_stops_reconnecting(backend):

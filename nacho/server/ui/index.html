@@ -872,6 +872,7 @@ const state = {
   readOnly: false,
   apps: {},          // name -> info
   selected: null,    // app name
+  generation: null,  // server process identity; revisions are scoped to it
   revision: null,
   configObj: {},     // server-truth config object
   configFormat: localStorage.getItem("nacho_config_format") || "json",
@@ -1520,6 +1521,7 @@ async function loadAppDetail(name) {
   try {
     const cfg = await api("GET", "/api/apps/" + encodeURIComponent(name) + "/config");
     configObj = cfg.data;
+    state.generation = cfg.headers.get("X-Nacho-Generation") || state.generation;
     state.revision = parseInt(cfg.headers.get("X-Nacho-Revision"), 10) || state.apps[name]?.revision || 1;
     const sch = await api("GET", "/api/apps/" + encodeURIComponent(name) + "/schema");
     schemaObj = sch.data.data;
@@ -1566,7 +1568,7 @@ function renderDetail() {
           <button class="link danger" id="delete-btn">Delete</button>
         </span>`}
       </div>
-      <p class="desc${info.description ? "" : " none"}">${esc(info.description || "No description")}</p>
+      <p id="app-description" class="desc${info.description ? "" : " none"}">${esc(info.description || "No description")}</p>
     </header>
     <p class="status-line">
       <span class="st-item live-seg"><span class="live-dot ${wsOn ? "on" : "off"}" id="live-dot"></span><span id="live-label">${wsOn ? "Live" : "Reconnecting…"}</span></span>
@@ -2442,6 +2444,7 @@ function openWs(name, attempt) {
     state.wsRetry = setTimeout(() => openWs(name, attempt + 1), delay);
   };
   ws.onmessage = (ev) => {
+    if (state.ws !== ws) return;
     let msg;
     try { msg = JSON.parse(ev.data); } catch (_) { return; }
     if (msg.app !== state.selected) return;
@@ -2470,8 +2473,13 @@ function setLive(on) {
 
 async function onRemoteUpdate(msg) {
   // Apply monotonically: ignore out-of-order or duplicate broadcasts whose
-  // revision is not newer than what we already have.
-  if (msg.revision != null && state.revision != null && msg.revision <= state.revision) return;
+  // revision is not newer than what we already have. Revisions start over
+  // after an ephemeral server restart, so generation changes reset the scope.
+  const generationChanged = !!(msg.generation && state.generation &&
+    msg.generation !== state.generation);
+  if (!generationChanged && msg.revision != null && state.revision != null &&
+      msg.revision <= state.revision) return;
+  if (msg.generation) state.generation = msg.generation;
   refreshApps().catch(() => {});
   if (anyDirty()) {
     // Do NOT adopt the new revision or reset pristine while there are unsaved
@@ -2509,20 +2517,30 @@ async function onRemoteUpdate(msg) {
       catch (_) { state.pristine = JSON.stringify(msg.data, null, 2); }
     }
   }
-  if (state.activeTab === "history") renderHistoryTab();
-  // The schema is not carried in WS payloads — refresh it when it may be stale.
-  if (state.activeTab === "schema" && schemaEd && !isSchemaDirty()) {
-    try {
-      const sch = await api("GET",
-        "/api/apps/" + encodeURIComponent(state.selected) + "/schema");
-      state.schema = sch.data.data;
-      state.schemaPristine = state.schema
-        ? await serialize(state.schema, state.schemaFormat) : "";
+  if (Object.prototype.hasOwnProperty.call(msg, "schema")) {
+    state.schema = msg.schema;
+    if (state.schema) {
+      const rendered = await serializeSafe(state.schema, state.schemaFormat, "schema");
+      state.schemaFormat = rendered.fmt;
+      state.schemaPristine = rendered.text;
+    } else {
+      state.schemaPristine = "";
+    }
+    if (state.activeTab === "schema" && schemaEd) {
       schemaEd.value = state.schemaPristine;
       updateSchemaDirty();
-      setSchemaFlag();
-    } catch (_) { /* leave the current view as-is */ }
+    }
+    setSchemaFlag();
   }
+  if (Object.prototype.hasOwnProperty.call(msg, "description")) {
+    if (state.apps[state.selected]) state.apps[state.selected].description = msg.description;
+    const desc = $("app-description");
+    if (desc) {
+      desc.textContent = msg.description || "No description";
+      desc.classList.toggle("none", !msg.description);
+    }
+  }
+  if (state.activeTab === "history") renderHistoryTab();
 }
 
 /* ===================================================================== */

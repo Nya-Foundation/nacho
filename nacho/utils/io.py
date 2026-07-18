@@ -59,7 +59,7 @@ def load_file(path: Union[str, Path]) -> Dict[str, Any]:
 _SUFFIX_FORMATS = {".yaml": "yaml", ".yml": "yaml", ".json": "json", ".toml": "toml"}
 
 
-def save_file(path: Union[str, Path], data: Dict[str, Any]) -> None:
+def save_file(path: Union[str, Path], data: Dict[str, Any], *, file_mode: int = 0o644) -> None:
     """Persist *data* atomically to a YAML / JSON / TOML file.
 
     Raises IOError on write failures, ValueError when the data cannot be
@@ -81,7 +81,7 @@ def save_file(path: Union[str, Path], data: Dict[str, Any]) -> None:
             os.fsync(f.fileno())
         # mkstemp creates 0600 files; keep the target's existing mode (or a
         # conventional default) instead of silently tightening permissions.
-        os.chmod(tmp_name, path.stat().st_mode & 0o777 if path.exists() else 0o644)
+        os.chmod(tmp_name, path.stat().st_mode & 0o777 if path.exists() else file_mode)
         os.replace(tmp_name, path)
     except OSError as exc:
         raise OSError(f"Failed to write {path}: {exc}") from exc

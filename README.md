@@ -290,7 +290,8 @@ is how the CLI and UI submit YAML and TOML:
 
 Every app carries a monotonically increasing revision, bumped on each
 successful write. Reads of `/config` (full or per-path) return the current
-revision in the `ETag` and `X-Nacho-Revision` response headers. Writes may
+revision in `X-Nacho-Revision`; `X-Nacho-Generation` identifies the current
+server process, and `ETag` combines both values. Writes may
 include a `revision` field stating the revision the client last saw; if the
 server has moved on, the write fails with `409 Conflict` and the stored
 configuration is left untouched:
@@ -308,7 +309,8 @@ The `ETag` also enables cheap polling: send it back as `If-None-Match` and
 the server answers `304 Not Modified` — no body — until the revision moves.
 
 ```bash
-curl -H 'If-None-Match: "3"' http://127.0.0.1:8000/api/apps/my-service/config
+curl -H 'If-None-Match: "<generation>:3"' \
+  http://127.0.0.1:8000/api/apps/my-service/config
 ```
 
 ### History and rollback
@@ -383,7 +385,9 @@ Real-time:
 
 The WebSocket is receive-only: the server sends an `initial_config` message
 on subscribe followed by an `update` message per change, each carrying the
-app name, revision, and full configuration. Writes always go through REST, so
+server generation, app name, revision, full configuration, schema, and current
+metadata. The generation lets clients recover safely when an ephemeral server
+restarts its revision counter. Writes always go through REST, so
 there is never ambiguity about who owns the state.
 
 ## Remote clients
@@ -456,6 +460,9 @@ the counter resets on every successful connection. Keepalive pings detect
 half-open connections, and permanent failures (bad key, deleted app) stop
 the retry loop with a clear log line instead of retrying forever. Stale or
 out-of-order pushes are dropped, so the local snapshot never rolls backwards.
+Applications can expose `storage.watching`, `storage.last_watch_error`, and
+`storage.generation` in their own health checks instead of relying on logs to
+detect a stale subscription.
 
 The CLI covers the same ground without the SDK — see
 [Command-line interface](#command-line-interface).
@@ -766,6 +773,10 @@ Or with Compose:
 docker compose up --build
 ```
 
+Compose binds to loopback by default and persists server state in the
+`nacho-data` volume. Add `--api-key` before exposing the port beyond the local
+machine.
+
 The image entrypoint is `nacho`; the default command is
 `server --host 0.0.0.0 --config config.yaml`. Append any `nacho server` flags
 to override the defaults. The container exposes port `8000`.
@@ -784,6 +795,8 @@ to override the defaults. The container exposes port `8000`.
 - Editing a `--config` file by hand while the server is running is not
   detected; the server's next write wins. Make changes through the API, CLI,
   or UI.
+- Newly created server state and history directories use mode `0700`, and
+  their JSON files use mode `0600`. Existing permissions are preserved.
 
 ## Development
 

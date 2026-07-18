@@ -7,6 +7,7 @@ has to check a return value — invalid writes are refused immediately.
 
 from __future__ import annotations
 
+import copy
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Union
@@ -59,6 +60,11 @@ class SchemaValidator:
             self._schema,
             format_checker=jsonschema.FormatChecker(),
         )
+
+    @property
+    def schema(self) -> Dict[str, Any]:
+        """Return an isolated copy of the schema enforced by this validator."""
+        return copy.deepcopy(self._schema)
 
     # ------------------------------------------------------------------
     # Public API

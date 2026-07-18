@@ -119,3 +119,27 @@ def test_container_remote_backend(docker_server):
         assert config.get("dockerized") is True
     finally:
         config.cleanup()
+
+
+def test_server_image_omits_remote_client_dependencies(docker_server):
+    """The runtime server should not carry requests/websocket-client unnecessarily."""
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "python",
+            IMAGE_TAG,
+            "-c",
+            (
+                "import importlib.util; "
+                "assert importlib.util.find_spec('requests') is None; "
+                "assert importlib.util.find_spec('websocket') is None"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr

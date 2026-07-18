@@ -26,11 +26,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 LOGGER = logging.getLogger("nacho.cli")
 
-# Exit codes. EXIT_USAGE is argparse's own code for bad arguments; the rest
-# are produced by the @cli_command wrapper from the typed client errors.
+# Exit codes produced by the @cli_command wrapper from typed client errors.
 EXIT_OK = 0
 EXIT_ERROR = 1
-EXIT_USAGE = 2
 EXIT_NOT_FOUND = 3
 EXIT_CONFLICT = 4
 EXIT_AUTH = 5

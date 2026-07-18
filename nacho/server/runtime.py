@@ -7,6 +7,7 @@ import copy
 import logging
 import os
 import threading
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -148,6 +149,7 @@ class ConfigApp:
     revision: int = 1
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
+    generation: str = ""
 
     def __post_init__(self) -> None:
         self.hub = WebSocketHub(self.name, self.logger)
@@ -158,47 +160,57 @@ class ConfigApp:
         # Tombstone: set by AppManager.delete() so a writer that looked the
         # app up just before deletion cannot resurrect its files on disk.
         self.deleted = False
+        self._committed = self.snapshot()
 
     def broadcast_update(self) -> None:
         self.hub.schedule(self._broadcast_update)
 
     async def _broadcast_update(self) -> None:
-        await self.hub.broadcast(
-            {
-                "type": "update",
+        await self.hub.broadcast(self.event_payload("update"))
+
+    def event_payload(self, event_type: str) -> Dict[str, Any]:
+        """Return one lock-consistent state frame for WebSocket consumers."""
+        with self.lock:
+            return {
+                "type": event_type,
                 "app": self.name,
+                "generation": self.generation,
                 "revision": self.revision,
                 "data": self.config.get_all(),
+                "schema": copy.deepcopy(self.schema),
+                "description": self.description,
+                "updated_at": self.updated_at,
             }
-        )
 
     @property
     def info(self) -> Dict[str, Any]:
-        return {
-            "name": self.name,
-            "description": self.description,
-            "revision": self.revision,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "config_count": len(self.config.get_all()),
-            "connections": self.hub.count,
-            "schema": self.schema is not None,
-        }
+        with self.lock:
+            return {
+                "name": self.name,
+                "description": self.description,
+                "revision": self.revision,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+                "config_count": len(self.config.get_all()),
+                "connections": self.hub.count,
+                "schema": self.schema is not None,
+            }
 
     def touch(self) -> None:
         self.revision += 1
         self.updated_at = utc_now()
 
     def snapshot(self) -> Dict[str, Any]:
-        return {
-            "name": self.name,
-            "description": self.description,
-            "revision": self.revision,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "schema": copy.deepcopy(self.schema),
-            "config": self.config.get_all(),
-        }
+        with self.lock:
+            return {
+                "name": self.name,
+                "description": self.description,
+                "revision": self.revision,
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+                "schema": copy.deepcopy(self.schema),
+                "config": self.config.get_all(),
+            }
 
     def cleanup(self) -> None:
         self.config.cleanup()
@@ -214,9 +226,13 @@ class HistoryStore:
     """
 
     def __init__(self, data_dir: Optional[Path], limit: int = 50) -> None:
+        if limit < 0:
+            raise ValueError("history_limit must be zero or greater")
         self.limit = limit
         self.dir = Path(data_dir) / "history" if data_dir else None
         self._mem: Dict[str, Dict[int, Dict[str, Any]]] = {}
+        if self.enabled and self.dir is not None and not self.dir.exists():
+            self.dir.mkdir(parents=True, mode=0o700)
 
     @property
     def enabled(self) -> bool:
@@ -226,7 +242,7 @@ class HistoryStore:
         validate_app_name(name)
         return safe_child_path(self.dir, name)  # type: ignore[arg-type]
 
-    def record(self, snapshot: Dict[str, Any]) -> None:
+    def record(self, snapshot: Dict[str, Any], *, prune: bool = True) -> None:
         """Store *snapshot* under its revision and prune beyond the limit."""
         if not self.enabled:
             return
@@ -235,12 +251,26 @@ class HistoryStore:
         if self.dir is None:
             revisions = self._mem.setdefault(name, {})
             revisions[revision] = copy.deepcopy(snapshot)
+            if prune:
+                self.prune(name)
+            return
+        app_dir = self._app_dir(name)
+        if not app_dir.exists():
+            app_dir.mkdir(parents=True, mode=0o700)
+        save_file(app_dir / f"{revision:08d}.json", snapshot, file_mode=0o600)
+        if prune:
+            self.prune(name)
+
+    def prune(self, name: str) -> None:
+        """Apply the retention limit after a revision is fully committed."""
+        if not self.enabled:
+            return
+        if self.dir is None:
+            revisions = self._mem.get(name, {})
             for old in sorted(revisions)[: -self.limit]:
                 del revisions[old]
             return
-        app_dir = self._app_dir(name)
-        save_file(app_dir / f"{revision:08d}.json", snapshot)
-        files = sorted(app_dir.glob("*.json"))
+        files = sorted(self._app_dir(name).glob("*.json"))
         for stale in files[: -self.limit]:
             stale.unlink(missing_ok=True)
 
@@ -266,6 +296,15 @@ class HistoryStore:
         if not path.exists():
             return None
         return load_file(path) or None
+
+    def remove(self, name: str, revision: int) -> None:
+        """Remove one snapshot, used to roll back a failed persistence sequence."""
+        if self.dir is None:
+            revisions = self._mem.get(name)
+            if revisions is not None:
+                revisions.pop(revision, None)
+            return
+        (self._app_dir(name) / f"{revision:08d}.json").unlink(missing_ok=True)
 
     def delete(self, name: str) -> None:
         self._mem.pop(name, None)
@@ -307,8 +346,9 @@ class AppStore:
 
     def __init__(self, data_dir: Optional[Path]) -> None:
         self.data_dir = Path(data_dir) if data_dir else None
-        if self.data_dir:
-            self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.load_errors: List[str] = []
+        if self.data_dir and not self.data_dir.exists():
+            self.data_dir.mkdir(parents=True, mode=0o700)
 
     def _path(self, name: str) -> Path:
         if self.data_dir is None:
@@ -324,8 +364,23 @@ class AppStore:
             try:
                 data = load_file(path)
             except (OSError, ValueError) as exc:
-                # One corrupt file must not take the whole service down.
-                logging.getLogger(__name__).error("Skipping unreadable app file %s: %s", path, exc)
+                # One corrupt file must not take the whole service down or be
+                # overwritten by a subsequently auto-created app. Quarantine
+                # it beside the state directory for operator recovery.
+                message = f"Skipping unreadable app file {path}: {exc}"
+                self.load_errors.append(message)
+                logging.getLogger(__name__).error(message)
+                quarantine = path.with_suffix(path.suffix + ".corrupt")
+                counter = 1
+                while quarantine.exists():
+                    quarantine = path.with_suffix(path.suffix + f".corrupt.{counter}")
+                    counter += 1
+                try:
+                    path.replace(quarantine)
+                except OSError:
+                    logging.getLogger(__name__).error(
+                        "Failed to quarantine unreadable app file %s", path, exc_info=True
+                    )
                 continue
             if data:
                 apps.append(data)
@@ -334,7 +389,7 @@ class AppStore:
     def save(self, app: ConfigApp) -> None:
         if self.data_dir is None:
             return
-        save_file(self._path(app.name), app.snapshot())
+        save_file(self._path(app.name), app.snapshot(), file_mode=0o600)
 
     def delete(self, name: str) -> None:
         if self.data_dir is None:
@@ -355,6 +410,7 @@ class AppManager:
         self.logger = logger or logging.getLogger(__name__)
         self.store = AppStore(data_dir)
         self.history = HistoryStore(data_dir, limit=history_limit)
+        self.generation = uuid.uuid4().hex
         self._apps: Dict[str, ConfigApp] = {}
         # Guards the _apps dict and cross-app operations (create/rename/
         # delete). Per-app work runs under ConfigApp.lock — see _locked_app.
@@ -398,6 +454,7 @@ class AppManager:
                     revision=int(raw.get("revision") or 1),
                     created_at=raw.get("created_at") or utc_now(),
                     updated_at=raw.get("updated_at") or utc_now(),
+                    generation=self.generation,
                 )
             except Exception as exc:
                 # An app whose persisted config no longer satisfies its
@@ -422,23 +479,56 @@ class AppManager:
         with self._lock:
             if name in self._apps and not replace:
                 raise ValueError(f"App {name!r} already exists")
-            if name in self._apps:
-                old = self._apps[name]
+            old = self._apps.get(name)
+            app_config = config or Nacho(config_data or {}, schema=schema)
+            target_schema = copy.deepcopy(schema if schema is not None else app_config.schema)
+            target_description = description
+            revision = 1
+            created_at = utc_now()
+            updated_at = created_at
+
+            if old is not None:
+                # Startup seeds (notably --config + --data-dir) replace the
+                # storage backend, not the revision timeline. Preserve durable
+                # metadata and treat changed file content as a normal new
+                # revision instead of rewinding the app to r1.
                 with old.lock:
+                    old_snapshot = old.snapshot()
+                    if target_schema is None:
+                        target_schema = copy.deepcopy(old.schema)
+                    if app_config.schema != target_schema:
+                        app_config._force_replace(app_config.get_all(), schema=target_schema)
+                    if target_description is None:
+                        target_description = old.description
+                    revision = old.revision
+                    created_at = old.created_at
+                    updated_at = old.updated_at
                     old.deleted = True
                     old.cleanup()
 
-            app_config = config or Nacho(config_data or {}, schema=schema)
             app = ConfigApp(
                 name=name,
                 config=app_config,
-                description=description,
-                schema=schema,
+                description=target_description,
+                schema=target_schema,
                 logger=self.logger,
+                revision=revision,
+                created_at=created_at,
+                updated_at=updated_at,
+                generation=self.generation,
             )
             self._apps[name] = app
-            self.store.save(app)
-            self.history.record(app.snapshot())
+            if old is None:
+                self.store.save(app)
+                self.history.record(app.snapshot())
+                app._committed = app.snapshot()
+            else:
+                changed = (
+                    app.config.get_all() != old_snapshot["config"]
+                    or app.schema != old_snapshot["schema"]
+                    or app.description != old_snapshot["description"]
+                )
+                self.persist(app, changed=changed)
             return app
 
     def replace(
@@ -500,21 +590,34 @@ class AppManager:
                     app.description = description
                     changed = True
 
-                renamed = bool(new_name and new_name != current_name)
-                if renamed:
-                    validate_app_name(new_name)
-                    if new_name in self._apps:
-                        raise ValueError(f"App {new_name!r} already exists")
+                renamed_to = new_name if new_name and new_name != current_name else None
+                if renamed_to is not None:
+                    validate_app_name(renamed_to)
+                    if renamed_to in self._apps:
+                        raise ValueError(f"App {renamed_to!r} already exists")
                     del self._apps[current_name]
                     self.store.delete(current_name)
-                    self.history.rename(current_name, new_name)
-                    app.name = new_name
-                    app.hub.app_name = new_name
-                    self._apps[new_name] = app
+                    self.history.rename(current_name, renamed_to)
+                    app.name = renamed_to
+                    app.hub.app_name = renamed_to
+                    self._apps[renamed_to] = app
                     changed = True
 
-                self.persist(app, changed=changed, notify=changed)
-            if renamed:
+                try:
+                    self.persist(app, changed=changed, notify=changed)
+                except Exception:
+                    if renamed_to is not None:
+                        # persist() restored config/metadata/revision; restore
+                        # the cross-app indexes and paths handled here as well.
+                        del self._apps[renamed_to]
+                        self.store.delete(renamed_to)
+                        self.history.rename(renamed_to, current_name)
+                        app.name = current_name
+                        app.hub.app_name = current_name
+                        self._apps[current_name] = app
+                        self.store.save(app)
+                    raise
+            if renamed_to is not None:
                 # Disconnect subscribers of the old name: their /ws/{old}
                 # endpoint is dead, and a reconnect surfaces a clear
                 # "app not found" instead of silently mirroring the renamed
@@ -525,12 +628,48 @@ class AppManager:
     def persist(self, app: ConfigApp, *, changed: bool = True, notify: bool = False) -> None:
         should_notify = False
         with app.lock:
+            before = copy.deepcopy(app._committed)
+            recorded_revision: Optional[int] = None
+            try:
+                if changed:
+                    app.config.save()
+                    app.touch()
+                    recorded_revision = app.revision
+                    self.history.record(app.snapshot(), prune=False)
+                    should_notify = notify
+                self.store.save(app)
+            except Exception:
+                # A failed write must not leave memory claiming a value that the
+                # API reported as rejected. Restore the last fully committed
+                # snapshot and make a best effort to repair any files already
+                # written earlier in this persistence sequence.
+                app.config._force_replace(before["config"], schema=before["schema"])
+                app.description = before["description"]
+                app.schema = copy.deepcopy(before["schema"])
+                app.revision = before["revision"]
+                app.created_at = before["created_at"]
+                app.updated_at = before["updated_at"]
+                if recorded_revision is not None:
+                    try:
+                        self.history.remove(app.name, recorded_revision)
+                    except Exception:
+                        self.logger.error(
+                            "Failed to remove uncommitted history snapshot", exc_info=True
+                        )
+                try:
+                    app.config.save()
+                    self.store.save(app)
+                except Exception:
+                    self.logger.error("Failed to restore persisted app state", exc_info=True)
+                raise
+            app._committed = app.snapshot()
             if changed:
-                app.config.save()
-                app.touch()
-                self.history.record(app.snapshot())
-                should_notify = notify
-            self.store.save(app)
+                try:
+                    self.history.prune(app.name)
+                except Exception:
+                    # Retention is housekeeping; a failed unlink must not turn
+                    # an otherwise durable config write into a false failure.
+                    self.logger.error("Failed to prune app history", exc_info=True)
         if should_notify:
             app.broadcast_update()
 

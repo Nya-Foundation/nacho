@@ -122,12 +122,20 @@ class NachoOrchestrator:
         async def cap_body_size(request: Request, call_next):
             length = request.headers.get("content-length")
             if length and length.isdigit() and int(length) > _MAX_BODY_BYTES:
-                return JSONResponse(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    content={
-                        "detail": f"Request body exceeds {_MAX_BODY_BYTES // (1024 * 1024)} MiB"
-                    },
-                )
+                return self._body_too_large()
+            if request.method in {"POST", "PUT", "PATCH"} and not (length and length.isdigit()):
+                # Transfer-Encoding: chunked has no Content-Length. Consume only
+                # up to the limit, then let Starlette replay the cached body to
+                # the endpoint. This closes the header-bypass without buffering
+                # an unbounded request.
+                chunks = []
+                size = 0
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > _MAX_BODY_BYTES:
+                        return self._body_too_large()
+                    chunks.append(chunk)
+                request._body = b"".join(chunks)
             return await call_next(request)
 
         if self.cors_origins:
@@ -159,6 +167,8 @@ class NachoOrchestrator:
                 "apps": len(self.manager.apps),
                 "read_only": self.read_only,
                 "auth_required": self.auth is not None,
+                "generation": self.manager.generation,
+                "load_errors": len(self.manager.store.load_errors),
             }
 
         @self.app.get("/ui", include_in_schema=False)
@@ -267,11 +277,12 @@ class NachoOrchestrator:
         @self.app.get("/api/apps/{app_name}/config")
         def get_config(app_name: str, request: Request, response: Response) -> Any:
             app = self._get_app(app_name)
-            not_modified = self._not_modified(request, app)
+            snapshot = app.snapshot()
+            not_modified = self._not_modified(request, snapshot["revision"])
             if not_modified is not None:
                 return not_modified
-            self._set_revision_headers(response, app)
-            return app.config.get_all()
+            self._set_revision_headers(response, snapshot["revision"])
+            return snapshot["config"]
 
         @self.app.put("/api/apps/{app_name}/config")
         def replace_config(
@@ -302,8 +313,7 @@ class NachoOrchestrator:
 
         @self.app.get("/api/apps/{app_name}/schema")
         def get_schema(app_name: str) -> Dict[str, Any]:
-            app = self._get_app(app_name)
-            return {"data": app.schema}
+            return {"data": self._get_app(app_name).snapshot()["schema"]}
 
         @self.app.put("/api/apps/{app_name}/schema")
         def replace_schema(
@@ -331,15 +341,16 @@ class NachoOrchestrator:
         @self.app.get("/api/apps/{app_name}/config/{path:path}")
         def get_path(app_name: str, path: str, request: Request, response: Response) -> Any:
             app = self._get_app(app_name)
-            not_modified = self._not_modified(request, app)
+            snapshot = app.snapshot()
+            not_modified = self._not_modified(request, snapshot["revision"])
             if not_modified is not None:
                 return not_modified
-            self._set_revision_headers(response, app)
+            self._set_revision_headers(response, snapshot["revision"])
             # Resolve against the snapshot directly: Nacho.get() deep-copies its
             # result, so an identity-sentinel passed to it would never compare
             # equal — get_nested_value preserves the sentinel by identity.
             missing = object()
-            value = get_nested_value(app.config.get_all(), path, missing)
+            value = get_nested_value(snapshot["config"], path, missing)
             if value is missing:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -481,14 +492,7 @@ class NachoOrchestrator:
 
             await app.hub.connect(websocket)
             try:
-                await websocket.send_json(
-                    {
-                        "type": "initial_config",
-                        "app": app.name,
-                        "revision": app.revision,
-                        "data": app.config.get_all(),
-                    }
-                )
+                await websocket.send_json(app.event_payload("initial_config"))
                 while True:
                     # receive() (not receive_text) so a binary frame is
                     # ignored instead of killing the connection.
@@ -551,6 +555,12 @@ class NachoOrchestrator:
     def _allow_cors_credentials(self) -> bool:
         return "*" not in self.cors_origins
 
+    def _body_too_large(self) -> JSONResponse:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": f"Request body exceeds {_MAX_BODY_BYTES // (1024 * 1024)} MiB"},
+        )
+
     def _get_app(self, name: str) -> ConfigApp:
         app = self.manager.get(name)
         if app is None:
@@ -573,12 +583,13 @@ class NachoOrchestrator:
             },
         )
 
-    def _set_revision_headers(self, response: Response, app: ConfigApp) -> None:
-        revision = str(app.revision)
-        response.headers["ETag"] = f'"{revision}"'
+    def _set_revision_headers(self, response: Response, revision_value: int) -> None:
+        revision = str(revision_value)
+        response.headers["ETag"] = f'"{self.manager.generation}:{revision}"'
         response.headers["X-Nacho-Revision"] = revision
+        response.headers["X-Nacho-Generation"] = self.manager.generation
 
-    def _not_modified(self, request: Request, app: ConfigApp) -> Optional[Response]:
+    def _not_modified(self, request: Request, revision: int) -> Optional[Response]:
         """304 response when If-None-Match already names the current revision.
 
         Lets pollers re-check cheaply: the config body is only sent when the
@@ -589,10 +600,11 @@ class NachoOrchestrator:
             return None
         tags = {tag.strip() for tag in header.split(",")}
         tags |= {tag[2:] for tag in tags if tag.startswith("W/")}
-        if "*" not in tags and f'"{app.revision}"' not in tags:
+        current = f'"{self.manager.generation}:{revision}"'
+        if "*" not in tags and current not in tags:
             return None
         response = Response(status_code=status.HTTP_304_NOT_MODIFIED)
-        self._set_revision_headers(response, app)
+        self._set_revision_headers(response, revision)
         return response
 
     def _check_writable(self) -> None:

@@ -318,3 +318,44 @@ def test_cli_history_and_rollback_flow(live_server):
     )
     assert fetched.returncode == 0, fetched.stderr
     assert json.loads(fetched.stdout) == "one"
+
+
+def test_config_seed_and_data_dir_keep_revision_monotonic_across_restart(
+    make_live_server, tmp_path
+):
+    """The documented --config + --data-dir combination must never rewind revisions."""
+    config = tmp_path / "service.yaml"
+    config.write_text("value: one\n")
+    data_dir = tmp_path / "durable"
+    args = ("--config", str(config), "--app-name", "svc")
+    first = make_live_server(data_dir=data_dir, extra_args=args)
+
+    changed = _run(
+        "set",
+        "value",
+        "two",
+        "--remote",
+        first.url,
+        "--app-name",
+        "svc",
+        "--revision",
+        "1",
+    )
+    assert changed.returncode == 0, changed.stderr
+    first.stop()
+
+    second = make_live_server(port=first.port, data_dir=data_dir, extra_args=args)
+    shown = _run(
+        "get",
+        "--show-revision",
+        "--remote",
+        second.url,
+        "--app-name",
+        "svc",
+    )
+    assert shown.returncode == 0, shown.stderr
+    body = json.loads(shown.stdout)
+    assert body == {"revision": 2, "data": {"value": "two"}}
+
+    history = _run("history", "list", "--remote", second.url, "--app-name", "svc")
+    assert [entry["revision"] for entry in json.loads(history.stdout)] == [2, 1]

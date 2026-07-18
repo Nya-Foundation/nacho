@@ -12,6 +12,7 @@ Requires the ``remote`` extra (``pip install nacho-python[remote]``).
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import requests
 
@@ -40,6 +41,7 @@ class NachoClient:
         self.app_name = app_name
         self.api_key = api_key
         self.timeout = timeout
+        self.last_generation: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Low-level request plumbing
@@ -109,7 +111,12 @@ class NachoClient:
         raise RemoteError(message, status=status_code, detail=detail)
 
     def _app(self, suffix: str = "") -> str:
-        return f"/api/apps/{self.app_name}{suffix}"
+        return f"/api/apps/{quote(self.app_name, safe='')}{suffix}"
+
+    def _record_generation(self, resp: requests.Response) -> None:
+        generation = resp.headers.get("X-Nacho-Generation")
+        if generation:
+            self.last_generation = generation
 
     @staticmethod
     def _revision_from(resp: requests.Response) -> Optional[int]:
@@ -181,6 +188,7 @@ class NachoClient:
 
     def get_config(self) -> Tuple[Dict[str, Any], Optional[int]]:
         resp = self.request("GET", self._app("/config"))
+        self._record_generation(resp)
         return resp.json(), self._revision_from(resp)
 
     def put_config(
@@ -192,7 +200,8 @@ class NachoClient:
         return self.request("PUT", self._app("/config"), json_body=payload).json()
 
     def get_path(self, path: str) -> Tuple[Any, Optional[int]]:
-        resp = self.request("GET", self._app(f"/config/{path}"))
+        resp = self.request("GET", self._app(f"/config/{quote(path, safe='')}"))
+        self._record_generation(resp)
         return resp.json()["value"], self._revision_from(resp)
 
     def set_path(
@@ -206,11 +215,15 @@ class NachoClient:
         payload: Dict[str, Any] = {"value": value, "type": value_type}
         if revision is not None:
             payload["revision"] = revision
-        return self.request("PUT", self._app(f"/config/{path}"), json_body=payload).json()
+        return self.request(
+            "PUT", self._app(f"/config/{quote(path, safe='')}"), json_body=payload
+        ).json()
 
     def delete_path(self, path: str, *, revision: Optional[int] = None) -> Dict[str, Any]:
         params = {"revision": revision} if revision is not None else None
-        return self.request("DELETE", self._app(f"/config/{path}"), params=params).json()
+        return self.request(
+            "DELETE", self._app(f"/config/{quote(path, safe='')}"), params=params
+        ).json()
 
     # ------------------------------------------------------------------
     # Schema

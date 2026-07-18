@@ -244,6 +244,44 @@ def test_live_update_reaches_clean_editor(make_live_server, new_page):
     expect(page.locator("#editor-status")).to_have_text("Saved")
 
 
+def test_remote_schema_and_metadata_updates_refresh_open_app(make_live_server, new_page):
+    """WS state frames keep schema and app details fresh, not only config text."""
+    server = make_live_server()
+    page = new_page()
+    open_app_view(page, server.url)
+    select_default_app(page)
+
+    rest(
+        server.url + "/api/apps/default/metadata",
+        method="PATCH",
+        body={"description": "Changed elsewhere", "revision": 1},
+    )
+    expect(page.locator("#app-description")).to_have_text("Changed elsewhere")
+    expect(page.locator("#rev-label")).to_have_text("2")
+
+    schema = {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+    rest(
+        server.url + "/api/apps/default/schema",
+        method="PUT",
+        body={"schema": schema, "revision": 2},
+    )
+    expect(page.locator("#schema-flag")).to_have_text("Schema attached")
+    expect(page.locator("#rev-label")).to_have_text("3")
+
+    page.click('.tab[data-tab="schema"]')
+    expect(page.locator("#schema-host textarea.code-input")).to_have_value(
+        json.dumps(schema, indent=2)
+    )
+
+    rest(
+        server.url + "/api/apps/default/schema",
+        method="PUT",
+        body={"schema": None, "revision": 3},
+    )
+    expect(page.locator("#schema-flag")).to_have_text("No schema")
+    expect(page.locator("#schema-host textarea.code-input")).to_have_value("")
+
+
 def test_dirty_editor_survives_remote_update_then_conflicts(make_live_server, new_page):
     """A WS update over a dirty editor warns, and Save then hits the 409 flow."""
     server = make_live_server()

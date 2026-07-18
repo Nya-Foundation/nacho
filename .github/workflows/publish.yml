@@ -171,17 +171,17 @@ jobs:
         
     # Set up QEMU for multi-platform builds
     - name: Set up QEMU
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       uses: docker/setup-qemu-action@v3
       
     # Set up Docker Buildx
     - name: Set up Docker Buildx
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       uses: docker/setup-buildx-action@v3
     
     # Define image name variables for reusability
     - name: Set image name variables
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       id: image-names
       run: |
         # Define the GitHub Container Registry image name (using organization)
@@ -198,7 +198,7 @@ jobs:
       
     # Log in to Docker Hub
     - name: Login to Docker Hub
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -206,7 +206,7 @@ jobs:
         
     # Extract version for tagging (only if Dockerfile exists)
     - name: Get project version
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       id: get-version
       run: |
         # If semantic release created a new version, use it; otherwise extract from pyproject.toml
@@ -220,7 +220,7 @@ jobs:
 
     # Log in to GitHub Container Registry
     - name: Login to GitHub Container Registry
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
@@ -229,7 +229,7 @@ jobs:
       
     # Build a single-arch image locally so it can be scanned BEFORE anything is pushed
     - name: Build image for vulnerability scan (linux/amd64, not pushed)
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -242,7 +242,7 @@ jobs:
 
     # Gate the push on a clean Trivy scan of the locally built image
     - name: Scan Docker image (Trivy, blocks push on CRITICAL/HIGH)
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: nacho-scan:${{ github.sha }}
@@ -254,7 +254,7 @@ jobs:
 
     # Build and push the multi-arch Docker image (only runs if the scan passed)
     - name: Build and push Docker image
-      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true' && steps.semantic-release.outputs.released == 'true'
       uses: docker/build-push-action@v5
       with:
         context: .

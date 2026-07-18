@@ -90,3 +90,10 @@ class TestSchemaValidator:
         }
         errors = SchemaValidator(schema).check({"v": 3.5})
         assert any(error.startswith("  ") for error in errors)
+
+    def test_schema_property_is_an_isolated_copy(self):
+        source = {"type": "object", "properties": {"x": {"type": "integer"}}}
+        validator = SchemaValidator(source)
+        exposed = validator.schema
+        exposed["properties"]["x"]["type"] = "string"
+        assert validator.schema["properties"]["x"]["type"] == "integer"

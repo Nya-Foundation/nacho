@@ -8,11 +8,10 @@ services:
     restart: unless-stopped
     ports:
       # Notes: change the host port if conflicting
-      - "8000:8000"
-    # Optional: mount a custom config file for the default app.
-    # volumes:
-    #   - ./config.yaml:/app/config.yaml
-    command: ["server", "--host", "0.0.0.0", "--config", "config.yaml"]
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - nacho-data:/app/data
+    command: ["server", "--host", "0.0.0.0", "--data-dir", "/app/data"]
     # Command Examples:
     # - With auth:      ["server", "--host", "0.0.0.0", "--config", "config.yaml", "--api-key", "your_api_key"]
     # - Read-only mode: ["server", "--host", "0.0.0.0", "--config", "config.yaml", "--read-only"]
@@ -30,3 +29,6 @@ networks:
     driver_opts:
       # Avoid naming conflicts; optional, WSL-safe
       com.docker.network.bridge.name: nacho-br
+
+volumes:
+  nacho-data:
