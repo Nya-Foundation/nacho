@@ -157,9 +157,9 @@ def test_cli_auth_flow(make_live_server):
     assert json.loads(fetched.stdout) == 42
 
 
-def test_cli_read_only_api_key(make_live_server):
-    """A read-only key can read and watch but never write."""
-    server = make_live_server(api_key="sekret", extra_args=("--read-only-api-key", "ro-key"))
+def test_cli_wrong_api_key_is_rejected(make_live_server):
+    """There is one key; anything else fails, for reads and writes alike."""
+    server = make_live_server(api_key="sekret")
 
     seeded = _run(
         "set",
@@ -174,34 +174,17 @@ def test_cli_read_only_api_key(make_live_server):
     )
     assert seeded.returncode == 0, seeded.stderr
 
-    fetched = _run(
-        "get",
-        "answer",
-        "--format",
-        "json",
-        "--remote",
-        server.url,
-        "--app-name",
-        "default",
-        "--api-key",
-        "ro-key",
-    )
-    assert fetched.returncode == 0, fetched.stderr
-    assert json.loads(fetched.stdout) == 42
-
-    denied = _run(
-        "set",
-        "answer",
-        "43",
-        "--remote",
-        server.url,
-        "--app-name",
-        "default",
-        "--api-key",
-        "ro-key",
-    )
-    assert denied.returncode == 5  # auth-failure exit code
-    assert "read-only" in denied.stderr
+    for command in (("get", "answer"), ("set", "answer", "43")):
+        denied = _run(
+            *command,
+            "--remote",
+            server.url,
+            "--app-name",
+            "default",
+            "--api-key",
+            "not-sekret",
+        )
+        assert denied.returncode == 5, denied.stderr  # auth-failure exit code
 
 
 def test_cli_history_diff_flow(live_server):
@@ -335,3 +318,44 @@ def test_cli_history_and_rollback_flow(live_server):
     )
     assert fetched.returncode == 0, fetched.stderr
     assert json.loads(fetched.stdout) == "one"
+
+
+def test_config_seed_and_data_dir_keep_revision_monotonic_across_restart(
+    make_live_server, tmp_path
+):
+    """The documented --config + --data-dir combination must never rewind revisions."""
+    config = tmp_path / "service.yaml"
+    config.write_text("value: one\n")
+    data_dir = tmp_path / "durable"
+    args = ("--config", str(config), "--app-name", "svc")
+    first = make_live_server(data_dir=data_dir, extra_args=args)
+
+    changed = _run(
+        "set",
+        "value",
+        "two",
+        "--remote",
+        first.url,
+        "--app-name",
+        "svc",
+        "--revision",
+        "1",
+    )
+    assert changed.returncode == 0, changed.stderr
+    first.stop()
+
+    second = make_live_server(port=first.port, data_dir=data_dir, extra_args=args)
+    shown = _run(
+        "get",
+        "--show-revision",
+        "--remote",
+        second.url,
+        "--app-name",
+        "svc",
+    )
+    assert shown.returncode == 0, shown.stderr
+    body = json.loads(shown.stdout)
+    assert body == {"revision": 2, "data": {"value": "two"}}
+
+    history = _run("history", "list", "--remote", second.url, "--app-name", "svc")
+    assert [entry["revision"] for entry in json.loads(history.stdout)] == [2, 1]

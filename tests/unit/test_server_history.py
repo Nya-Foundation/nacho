@@ -1,13 +1,17 @@
 """Tests for HistoryStore and AppManager rollback semantics."""
 
+import threading
+
 import pytest
 
+from nacho import Nacho
 from nacho.server.runtime import (
     AppManager,
     HistoryStore,
     RevisionConflictError,
     safe_child_path,
 )
+from nacho.storage.base import StorageBackend, StorageError
 
 
 def test_safe_child_path_joins_and_refuses_escapes(tmp_path):
@@ -61,6 +65,11 @@ def test_limit_zero_disables_history(tmp_path):
     store.record(_snapshot())
     assert store.list("svc") == []
     assert not (tmp_path / "history").exists()
+
+
+def test_negative_history_limit_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="zero or greater"):
+        HistoryStore(tmp_path, limit=-1)
 
 
 def test_rename_moves_history(store):
@@ -155,6 +164,161 @@ def test_disk_history_survives_manager_restart(tmp_path):
     second.load_persisted()
     app = second.rollback("svc", 1)
     assert app.config.get_all() == {"x": 1}
+
+
+def test_new_server_state_and_history_files_are_private(tmp_path):
+    data_dir = tmp_path / "state"
+    manager = AppManager(data_dir=data_dir, history_limit=10)
+    manager.create("svc", config_data={"secret": "value"})
+    assert (data_dir.stat().st_mode & 0o777) == 0o700
+    assert ((data_dir / "svc.json").stat().st_mode & 0o777) == 0o600
+    assert ((data_dir / "history").stat().st_mode & 0o777) == 0o700
+    assert ((data_dir / "history" / "svc").stat().st_mode & 0o777) == 0o700
+    assert ((data_dir / "history" / "svc" / "00000001.json").stat().st_mode & 0o777) == 0o600
+
+
+def test_replacing_persisted_seed_preserves_or_advances_revision(tmp_path):
+    data_dir = tmp_path / "state"
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("x: 1\n")
+
+    first = AppManager(data_dir=data_dir, history_limit=10)
+    first.create("svc", config=Nacho(config_file), replace=True)
+    first.set_config_path("svc", "x", 2)
+    assert first.get("svc").revision == 2
+
+    second = AppManager(data_dir=data_dir, history_limit=10)
+    second.load_persisted()
+    second.create("svc", config=Nacho(config_file), replace=True)
+    assert second.get("svc").revision == 2
+    assert [e["revision"] for e in second.list_history("svc")] == [2, 1]
+
+    config_file.write_text("x: 3\n")
+    third = AppManager(data_dir=data_dir, history_limit=10)
+    third.load_persisted()
+    third.create("svc", config=Nacho(config_file), replace=True)
+    assert third.get("svc").revision == 3
+    assert third.get("svc").config.get_all() == {"x": 3}
+
+
+class ControlledBackend(StorageBackend):
+    def __init__(self, data):
+        super().__init__()
+        self.data = dict(data)
+        self.fail = False
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.block = False
+
+    def load(self):
+        return dict(self.data)
+
+    def save(self, data):
+        self.started.set()
+        if self.block:
+            assert self.release.wait(5)
+        if self.fail:
+            raise StorageError("disk full")
+        self.data = dict(data)
+
+
+def test_failed_config_save_restores_memory_revision_and_history():
+    backend = ControlledBackend({"x": 1})
+    manager = AppManager(history_limit=10)
+    manager.create("svc", config=Nacho(backend))
+    backend.fail = True
+
+    with pytest.raises(StorageError, match="disk full"):
+        manager.set_config_path("svc", "x", 2)
+
+    app = manager.get("svc")
+    assert app.config.get_all() == {"x": 1}
+    assert app.revision == 1
+    assert [e["revision"] for e in manager.list_history("svc")] == [1]
+
+
+def test_failed_history_write_restores_memory_and_revision(monkeypatch):
+    manager = AppManager(history_limit=10)
+    app = manager.create("svc", config_data={"x": 1})
+    real_record = manager.history.record
+
+    def reject_new_revision(snapshot, **kwargs):
+        if snapshot["revision"] == 2:
+            raise OSError("history disk full")
+        return real_record(snapshot, **kwargs)
+
+    monkeypatch.setattr(manager.history, "record", reject_new_revision)
+    with pytest.raises(OSError, match="history disk full"):
+        manager.set_config_path("svc", "x", 2)
+
+    assert app.config.get_all() == {"x": 1}
+    assert app.revision == 1
+    assert [e["revision"] for e in manager.list_history("svc")] == [1]
+
+
+def test_reads_wait_for_persistence_and_observe_matching_revision():
+    backend = ControlledBackend({"x": 1})
+    manager = AppManager(history_limit=10)
+    app = manager.create("svc", config=Nacho(backend))
+    backend.block = True
+
+    writer = threading.Thread(target=lambda: manager.set_config_path("svc", "x", 2))
+    writer.start()
+    assert backend.started.wait(2)
+
+    result = []
+    reader = threading.Thread(target=lambda: result.append(app.snapshot()))
+    reader.start()
+    assert reader.is_alive(), "snapshot should wait while the write is being persisted"
+
+    backend.release.set()
+    writer.join(5)
+    reader.join(5)
+    assert result[0]["config"] == {"x": 2}
+    assert result[0]["revision"] == 2
+
+
+def test_failed_rename_restores_indexes_history_and_metadata(manager, monkeypatch):
+    manager.create("svc", config_data={"x": 1}, description="before")
+    real_save = manager.store.save
+    calls = 0
+
+    def fail_once(app):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk full")
+        return real_save(app)
+
+    monkeypatch.setattr(manager.store, "save", fail_once)
+    with pytest.raises(OSError, match="disk full"):
+        manager.rename("svc", new_name="renamed", description="after")
+
+    app = manager.get("svc")
+    assert app is not None
+    assert manager.get("renamed") is None
+    assert app.description == "before"
+    assert app.revision == 1
+    assert [entry["revision"] for entry in manager.list_history("svc")] == [1]
+
+
+def test_failed_commit_does_not_prune_last_good_history_entry(tmp_path, monkeypatch):
+    manager = AppManager(data_dir=tmp_path, history_limit=1)
+    manager.create("svc", config_data={"x": 1})
+    real_save = manager.store.save
+    calls = 0
+
+    def fail_once(app):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("store unavailable")
+        return real_save(app)
+
+    monkeypatch.setattr(manager.store, "save", fail_once)
+    with pytest.raises(OSError, match="store unavailable"):
+        manager.set_config_path("svc", "x", 2)
+    assert [entry["revision"] for entry in manager.list_history("svc")] == [1]
 
 
 def test_rollback_can_be_invalid_against_nothing(manager):

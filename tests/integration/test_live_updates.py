@@ -7,12 +7,14 @@ unit tests (TestClient + mocked WebSocketApp) cannot do.
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 
 import pytest
 
 import nacho.storage.remote as remote_mod
+from nacho import Nacho
 from nacho.storage.remote import RemoteStorageBackend
 
 WAIT = 15.0  # generous cap; events fire in milliseconds when things work
@@ -134,6 +136,51 @@ def test_ws_watcher_survives_server_restart(make_live_server, monkeypatch):
             writer.join(timeout=5)
     finally:
         backend.close()
+
+
+def test_public_sdk_adopts_lower_revision_from_new_server_generation(
+    make_live_server, monkeypatch, tmp_path
+):
+    """The README-level SDK flow recovers when an ephemeral server restarts at r1."""
+    monkeypatch.setattr(remote_mod, "_WS_RECONNECT_DELAY", 0.2)
+    server = make_live_server(data_dir=tmp_path / "old-state")
+    _http_json("PUT", server.url + "/api/apps/default/config", {"data": {"old": 1}})
+    _http_json("PUT", server.url + "/api/apps/default/config", {"data": {"old": 2}})
+
+    backend = RemoteStorageBackend(server.url, watch=True)
+    config = Nacho(storage=backend, events=True)
+    changed = threading.Event()
+
+    @config.on_change("@global")
+    def record_change(**_):
+        changed.set()
+
+    try:
+        assert config.get_all() == {"old": 2}
+        old_generation = backend.generation
+        assert backend.revision == 3
+
+        server.stop()
+        make_live_server(port=server.port, data_dir=tmp_path / "new-state")
+
+        deadline = time.monotonic() + WAIT
+        while time.monotonic() < deadline and config.get_all() != {}:
+            changed.wait(0.5)
+            changed.clear()
+        assert config.get_all() == {}
+        assert backend.revision == 1
+        assert backend.generation != old_generation
+
+        _http_json("PUT", server.url + "/api/apps/default/config", {"data": {"fresh": True}})
+        deadline = time.monotonic() + WAIT
+        while time.monotonic() < deadline and config.get("fresh") is not True:
+            changed.wait(0.5)
+            changed.clear()
+        assert config.get("fresh") is True
+        assert backend.watching
+        assert backend.last_watch_error is None
+    finally:
+        config.cleanup()
 
 
 def test_auth_enforced_over_real_transport(make_live_server):

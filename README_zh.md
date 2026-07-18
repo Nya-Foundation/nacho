@@ -134,7 +134,6 @@ nacho server \
 | `--app-name` | `default` | `--config` 文件对应的应用名称 |
 | `--data-dir` | 无 | 存放通过 API 创建的应用状态和历史记录的目录 |
 | `--api-key` | 无 | 启用 Bearer Token 认证 |
-| `--read-only-api-key` | 无 | 额外的只读访问密钥 |
 | `--history-limit` | `50` | 每个应用保留的修订版本快照数量（`0` 表示禁用历史记录） |
 | `--read-only` | 关闭 | 拒绝所有写入 |
 | `--reload` | 关闭 | 开发用的自动重载 |
@@ -194,7 +193,7 @@ function preauthenticateNacho(key, mountPath = "") {
 }
 ```
 
-只写入该登录用户有权使用的凭据。对于可以读取但不能修改配置的用户，应使用 `--read-only-api-key` 而非管理员密钥 —— UI 会在写入尝试时展示服务器返回的 `403`。
+仅为你的应用已经授权其管理配置的用户写入密钥。该密钥授予完整访问权限，因此若宿主应用希望部分用户只看不改，必须自行实现这一限制——要么不写入密钥，要么只为受信任的用户挂载 UI。
 
 不要通过 URL 传递密钥（`?token=`）：查询字符串会经由浏览器历史记录、`Referer` 请求头和代理日志泄露。
 
@@ -202,7 +201,10 @@ function preauthenticateNacho(key, mountPath = "") {
 
 传入 `--api-key`（或向 `NachoOrchestrator` 传入 `api_key=`）即可为整个 API 启用 Bearer 认证。客户端通过 `Authorization: Bearer <key>` 请求头发送密钥，或使用 UI 为其自身 WebSocket 握手设置的 Cookie。密钥缺失或错误的请求会收到 `401 Unauthorized`。密钥比较采用时序安全（timing-safe）算法。
 
-还可以通过 `--read-only-api-key`（或 `read_only_api_key=`）配置第二个密钥。它可以认证 GET 请求和 WebSocket 订阅，但任何写操作都会收到 `403 Forbidden` —— 把它交给仪表盘、轮询器和只消费配置的服务，写密钥就不会离开真正需要它的运维人员。
+只有一个密钥，访问权限是全有或全无——没有角色，也没有第二个密钥。只读场景由两个相互独立的控制项覆盖：
+
+- **客户端**若不应写入，在构造实例时传入 `read_only=True`；此后任何写操作都会在本地直接抛出 `PermissionError`，无需往返请求。
+- **服务端**若应拒绝一切写入，则以 `--read-only` 启动；此时无论调用方是谁，任何变更都会收到 `403 Forbidden`。
 
 `/`、`/health`、`/ui`、`/docs`、`/redoc` 和 `/openapi.json` 保持公开：API 的接口定义并不是秘密，需要保护的只是其背后的数据。
 
@@ -235,7 +237,7 @@ curl -X POST http://127.0.0.1:8000/api/apps \
 
 ### 修订版本与乐观并发控制
 
-每个应用都带有一个单调递增的修订版本号，每次成功写入后递增。对 `/config` 的读取（完整或按路径）会在 `ETag` 和 `X-Nacho-Revision` 响应头中返回当前修订版本。写入时可以包含 `revision` 字段，声明客户端最后看到的修订版本；如果服务器端的版本已经前进，写入将以 `409 Conflict` 失败，已存储的配置保持不变：
+每个应用都带有一个单调递增的修订版本号，每次成功写入后递增。对 `/config` 的读取会在 `X-Nacho-Revision` 中返回当前修订版本；`X-Nacho-Generation` 标识当前服务器进程，`ETag` 则组合这两个值。写入时可以包含 `revision` 字段，声明客户端最后看到的修订版本；如果服务器端的版本已经前进，写入将以 `409 Conflict` 失败，已存储的配置保持不变：
 
 ```bash
 curl -X PUT http://127.0.0.1:8000/api/apps/my-service/config/cache.ttl \
@@ -249,7 +251,7 @@ curl -X PUT http://127.0.0.1:8000/api/apps/my-service/config/cache.ttl \
 `ETag` 还支持低成本轮询：将其作为 `If-None-Match` 发回，在修订号变化之前服务器都会返回 `304 Not Modified`（无响应体）。
 
 ```bash
-curl -H 'If-None-Match: "3"' http://127.0.0.1:8000/api/apps/my-service/config
+curl -H 'If-None-Match: "<generation>:3"' http://127.0.0.1:8000/api/apps/my-service/config
 ```
 
 ### 历史与回滚
@@ -315,7 +317,7 @@ curl -X POST http://127.0.0.1:8000/api/apps/my-service/rollback \
 |---|---|---|
 | `/ws/{app}` | WebSocket | 订阅时接收当前配置，之后接收每次变更 |
 
-该 WebSocket 仅用于接收：服务器在订阅时发送一条 `initial_config` 消息，之后每次变更发送一条 `update` 消息，每条消息都携带应用名称、修订版本和完整配置。写入始终通过 REST 进行，因此状态的归属永远不存在歧义。
+该 WebSocket 仅用于接收：服务器在订阅时发送一条 `initial_config` 消息，之后每次变更发送一条 `update` 消息。每条消息都携带服务器 generation、应用名称、修订版本、完整配置、schema 和当前元数据。generation 让客户端在临时服务器重启并重置修订号后安全恢复。写入始终通过 REST 进行。
 
 ## 远程客户端
 
@@ -646,6 +648,8 @@ docker run -p 8000:8000 \
 docker compose up --build
 ```
 
+Compose 默认只绑定到本机回环地址，并把服务器状态持久化到 `nacho-data` 卷。将端口暴露到其他机器之前，请配置 `--api-key`。
+
 镜像的入口点是 `nacho`；默认命令为 `server --host 0.0.0.0 --config config.yaml`。追加任意 `nacho server` 参数即可覆盖默认值。容器暴露端口 `8000`。
 
 ## 运维说明
@@ -653,6 +657,7 @@ docker compose up --build
 - 点分路径有意保持简单。键名中的字面量点号和数字字符串键会产生歧义；请优先使用嵌套对象键。
 - 内置的 API 密钥认证适用于本地、私有和单租户部署。共享的生产环境部署应在服务前端补充范围化令牌、审计日志和速率限制。
 - 服务器状态基于文件且为单进程。修订版本计数器以内存中的值为权威，因此每个数据目录只应运行一个服务器进程；如需多进程或高可用运行，存储抽象层就是实现更强后端的边界。
+- 新建的服务器状态和历史目录权限为 `0700`，其中的 JSON 文件权限为 `0600`；已有权限保持不变。
 - 服务器运行期间手工编辑 `--config` 文件不会被检测到；服务器的下一次写入会覆盖它。请通过 API、CLI 或 UI 进行修改。
 
 ## 开发

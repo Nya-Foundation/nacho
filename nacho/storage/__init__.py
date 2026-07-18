@@ -11,10 +11,7 @@ from .file import FileStorageBackend
 try:
     import requests  # noqa: F401
     import websocket  # noqa: F401
-
-    HAS_REMOTE_DEPS = True
-    from .remote import RemoteStorageBackend
-except ImportError:  # pragma: no cover - optional 'remote' extra not installed
+except ModuleNotFoundError:  # pragma: no cover - optional 'remote' extra not installed
     HAS_REMOTE_DEPS = False
 
     class RemoteStorageBackend:  # type: ignore[no-redef]
@@ -23,6 +20,11 @@ except ImportError:  # pragma: no cover - optional 'remote' extra not installed
                 "RemoteStorageBackend requires extra dependencies. "
                 "Install with: pip install nacho-python[remote]"
             )
+else:
+    HAS_REMOTE_DEPS = True
+    # Keep this outside the dependency probe: an ImportError inside our own
+    # implementation is a real defect and must not be hidden as a missing extra.
+    from .remote import RemoteStorageBackend
 
 
 __all__ = [

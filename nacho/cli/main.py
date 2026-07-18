@@ -26,11 +26,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 LOGGER = logging.getLogger("nacho.cli")
 
-# Exit codes. EXIT_USAGE is argparse's own code for bad arguments; the rest
-# are produced by the @cli_command wrapper from the typed client errors.
+# Exit codes produced by the @cli_command wrapper from typed client errors.
 EXIT_OK = 0
 EXIT_ERROR = 1
-EXIT_USAGE = 2
 EXIT_NOT_FOUND = 3
 EXIT_CONFLICT = 4
 EXIT_AUTH = 5
@@ -245,10 +243,6 @@ def create_parser() -> argparse.ArgumentParser:
     server.add_argument("--schema", help="Schema file path")
     server.add_argument("--data-dir", help="Directory for API-created app state")
     server.add_argument("--api-key", help="API key for authentication")
-    server.add_argument(
-        "--read-only-api-key",
-        help="Additional API key granting read access only (GETs and WebSocket watch)",
-    )
     server.add_argument("--app-name", help="Application name for config server")
     server.add_argument(
         "--history-limit",
@@ -256,7 +250,11 @@ def create_parser() -> argparse.ArgumentParser:
         default=50,
         help="Revision snapshots to keep per app for rollback (0 disables history)",
     )
-    server.add_argument("--read-only", action="store_true", help="Read-only mode")
+    server.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Serve reads only — every write is refused, whoever the caller is",
+    )
     server.add_argument("--reload", action="store_true", help="Auto-reload for development")
     server.set_defaults(func=cmd_server)
 
@@ -443,9 +441,7 @@ def cmd_server(args: argparse.Namespace) -> int:
 
     print(banner())
 
-    # With only a read-only key configured, nobody can write at all, so the
-    # exposure warning only applies when NO key protects the server.
-    if not args.api_key and not args.read_only_api_key and not is_loopback_host(args.host):
+    if not args.api_key and not is_loopback_host(args.host):
         print(
             "WARNING: serving on a non-loopback interface without --api-key — "
             "anyone who can reach this host has full write access.",
@@ -460,7 +456,6 @@ def cmd_server(args: argparse.Namespace) -> int:
     orchestrator = NachoOrchestrator(
         apps=apps,
         api_key=args.api_key,
-        read_only_api_key=args.read_only_api_key,
         read_only=args.read_only,
         data_dir=args.data_dir,
         history_limit=args.history_limit,

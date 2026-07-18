@@ -12,12 +12,12 @@ ENV UV_COMPILE_BYTECODE=1 \
 # Dependency layer — cached until pyproject.toml or uv.lock change.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project \
-    --extra server --extra schema --extra remote
+    --extra server --extra schema
 
 # Project layer — non-editable install so the venv is fully self-contained.
 COPY . .
 RUN uv sync --frozen --no-dev --no-editable \
-    --extra server --extra schema --extra remote
+    --extra server --extra schema
 
 # Runtime stage: just Python, the venv, and a non-root user.
 FROM python:3.14-alpine AS runtime

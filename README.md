@@ -151,7 +151,6 @@ missed live updates.
 | `--app-name` | `default` | App name for the `--config` file |
 | `--data-dir` | none | Directory for API-created app state and history |
 | `--api-key` | none | Enable bearer-token authentication |
-| `--read-only-api-key` | none | Additional key granting read access only |
 | `--history-limit` | `50` | Revision snapshots kept per app (`0` disables history) |
 | `--read-only` | off | Reject every write |
 | `--reload` | off | Auto-reload for development |
@@ -228,10 +227,10 @@ function preauthenticateNacho(key, mountPath = "") {
 }
 ```
 
-Seed only a credential the signed-in user is entitled to. A user who may
-read configuration but not change it should be given the
-`--read-only-api-key`, not the admin key — the UI surfaces the server's
-`403` responses on write attempts.
+Seed the key only for users your own application has already authorised to
+manage configuration. The key grants full access, so a host application that
+wants some users to look without touching must enforce that itself — by not
+seeding the key, or by mounting the UI only for the users it trusts.
 
 Do not pass the key in the URL (`?token=`): query strings leak through
 browser history, `Referer` headers, and proxy logs.
@@ -244,11 +243,14 @@ authentication for the whole API. Clients send the key either as an
 its own WebSocket handshake. Requests with a missing or wrong key receive
 `401 Unauthorized`. The comparison is timing-safe.
 
-A second key can be added with `--read-only-api-key` (or
-`read_only_api_key=`). It authenticates GETs and WebSocket subscriptions but
-receives `403 Forbidden` on any write — hand it to dashboards, pollers, and
-services that only consume configuration, so the write credential never
-leaves the operators who need it.
+There is one key and access is all-or-nothing — no roles, no second key.
+Two separate controls cover the read-only cases:
+
+- A **client** that should never write constructs its instance with
+  `read_only=True`; every mutating call then raises `PermissionError`
+  locally, without a round trip.
+- A **server** that should refuse every write runs with `--read-only`, which
+  answers `403 Forbidden` to any mutation regardless of the caller.
 
 `/`, `/health`, `/ui`, `/docs`, `/redoc`, and `/openapi.json` stay public: the
 API surface is not a secret, only the data behind it.
@@ -288,7 +290,8 @@ is how the CLI and UI submit YAML and TOML:
 
 Every app carries a monotonically increasing revision, bumped on each
 successful write. Reads of `/config` (full or per-path) return the current
-revision in the `ETag` and `X-Nacho-Revision` response headers. Writes may
+revision in `X-Nacho-Revision`; `X-Nacho-Generation` identifies the current
+server process, and `ETag` combines both values. Writes may
 include a `revision` field stating the revision the client last saw; if the
 server has moved on, the write fails with `409 Conflict` and the stored
 configuration is left untouched:
@@ -306,7 +309,8 @@ The `ETag` also enables cheap polling: send it back as `If-None-Match` and
 the server answers `304 Not Modified` — no body — until the revision moves.
 
 ```bash
-curl -H 'If-None-Match: "3"' http://127.0.0.1:8000/api/apps/my-service/config
+curl -H 'If-None-Match: "<generation>:3"' \
+  http://127.0.0.1:8000/api/apps/my-service/config
 ```
 
 ### History and rollback
@@ -381,7 +385,9 @@ Real-time:
 
 The WebSocket is receive-only: the server sends an `initial_config` message
 on subscribe followed by an `update` message per change, each carrying the
-app name, revision, and full configuration. Writes always go through REST, so
+server generation, app name, revision, full configuration, schema, and current
+metadata. The generation lets clients recover safely when an ephemeral server
+restarts its revision counter. Writes always go through REST, so
 there is never ambiguity about who owns the state.
 
 ## Remote clients
@@ -454,6 +460,9 @@ the counter resets on every successful connection. Keepalive pings detect
 half-open connections, and permanent failures (bad key, deleted app) stop
 the retry loop with a clear log line instead of retrying forever. Stale or
 out-of-order pushes are dropped, so the local snapshot never rolls backwards.
+Applications can expose `storage.watching`, `storage.last_watch_error`, and
+`storage.generation` in their own health checks instead of relying on logs to
+detect a stale subscription.
 
 The CLI covers the same ground without the SDK — see
 [Command-line interface](#command-line-interface).
@@ -764,6 +773,10 @@ Or with Compose:
 docker compose up --build
 ```
 
+Compose binds to loopback by default and persists server state in the
+`nacho-data` volume. Add `--api-key` before exposing the port beyond the local
+machine.
+
 The image entrypoint is `nacho`; the default command is
 `server --host 0.0.0.0 --config config.yaml`. Append any `nacho server` flags
 to override the defaults. The container exposes port `8000`.
@@ -782,6 +795,8 @@ to override the defaults. The container exposes port `8000`.
 - Editing a `--config` file by hand while the server is running is not
   detected; the server's next write wins. Make changes through the API, CLI,
   or UI.
+- Newly created server state and history directories use mode `0700`, and
+  their JSON files use mode `0600`. Existing permissions are preserved.
 
 ## Development
 

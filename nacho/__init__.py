@@ -4,6 +4,7 @@ from ._version import __version__
 from .config import Nacho
 from .event import EventType
 from .schema import HAS_SCHEMA_DEPS, ValidationError
+from .server import HAS_SERVER_DEPS, NachoOrchestrator
 from .storage import (
     HAS_REMOTE_DEPS,
     AuthError,
@@ -15,13 +16,6 @@ from .storage import (
     StorageBackend,
     StorageError,
 )
-
-try:
-    from .server.app import NachoOrchestrator
-
-    HAS_SERVER_DEPS = True
-except ImportError:  # pragma: no cover - optional 'server' extra not installed
-    HAS_SERVER_DEPS = False
 
 __all__ = [
     "__version__",
@@ -41,6 +35,3 @@ __all__ = [
     "HAS_REMOTE_DEPS",
     "HAS_SERVER_DEPS",
 ]
-if not HAS_SERVER_DEPS:
-    # Keep __all__ truthful so `from nacho import *` never hits an undefined name.
-    __all__.remove("NachoOrchestrator")

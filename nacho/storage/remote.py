@@ -19,6 +19,7 @@ import json
 import logging
 import threading
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 import websocket
 
@@ -69,7 +70,8 @@ class RemoteStorageBackend(StorageBackend):
         self._client = NachoClient(url, app_name=app_name, api_key=api_key, timeout=timeout)
 
         self._ws_url = (
-            self._base.replace("https://", "wss://").replace("http://", "ws://") + f"/ws/{app_name}"
+            self._base.replace("https://", "wss://").replace("http://", "ws://")
+            + f"/ws/{quote(app_name, safe='')}"
         )
 
         self._ws: Optional[websocket.WebSocketApp] = None
@@ -78,6 +80,8 @@ class RemoteStorageBackend(StorageBackend):
         self._stop = threading.Event()
         self._running = False
         self._connected = False
+        self._watch_connected = False
+        self._last_error: Optional[str] = None
         self._watch_requested = watch
         self._ws_lock = threading.Lock()
 
@@ -85,6 +89,7 @@ class RemoteStorageBackend(StorageBackend):
         # pushed snapshot, used to keep applies monotonic.
         self._rev_lock = threading.Lock()
         self._revision: Optional[int] = None
+        self._generation: Optional[str] = None
         self._last_push: Optional[Dict[str, Any]] = None
 
         if auto_connect:
@@ -95,6 +100,24 @@ class RemoteStorageBackend(StorageBackend):
         """The last server revision this backend has seen (None before any read)."""
         with self._rev_lock:
             return self._revision
+
+    @property
+    def generation(self) -> Optional[str]:
+        """Opaque identity of the server process that supplied ``revision``."""
+        with self._rev_lock:
+            return self._generation
+
+    @property
+    def watching(self) -> bool:
+        """Whether the WebSocket subscription is currently connected."""
+        with self._ws_lock:
+            return self._watch_connected
+
+    @property
+    def last_watch_error(self) -> Optional[str]:
+        """Most recent WebSocket error, useful for health checks and diagnostics."""
+        with self._ws_lock:
+            return self._last_error
 
     # ------------------------------------------------------------------
     # StorageBackend interface
@@ -112,6 +135,11 @@ class RemoteStorageBackend(StorageBackend):
         if not isinstance(data, dict):
             raise StorageError(f"Remote app {self.app_name!r} returned non-object config")
         with self._rev_lock:
+            generation = self._client.last_generation
+            if generation and generation != self._generation:
+                self._generation = generation
+                self._revision = None
+                self._last_push = None
             if revision is not None:
                 if self._revision is not None and revision < self._revision:
                     # The watcher already applied a newer push; don't let a
@@ -174,6 +202,7 @@ class RemoteStorageBackend(StorageBackend):
     def close(self) -> None:
         with self._ws_lock:
             self._running = False
+            self._watch_connected = False
             self._stop.set()
             ws = self._ws
         if ws:
@@ -274,11 +303,17 @@ class RemoteStorageBackend(StorageBackend):
             # Event.wait so close() interrupts the backoff instead of blocking join().
             if self._stop.wait(_WS_RECONNECT_DELAY):
                 break
+        with self._ws_lock:
+            self._running = False
+            self._watch_connected = False
 
     def _on_open(self, ws: websocket.WebSocketApp) -> None:
         # A successful connection resets the counter so `reconnect` bounds
         # consecutive failures, not total disconnects over the process lifetime.
         self._ws_attempts = 0
+        with self._ws_lock:
+            self._watch_connected = True
+            self._last_error = None
         if self._stop.is_set():
             # close() ran between this connection being created and opening.
             ws.close()
@@ -286,6 +321,8 @@ class RemoteStorageBackend(StorageBackend):
         logger.debug("WS connected for app %r", self.app_name)
 
     def _on_message(self, ws: websocket.WebSocketApp, raw: str) -> None:
+        if ws is not None and ws is not self._ws:
+            return  # a frame queued by a superseded connection
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
@@ -300,7 +337,13 @@ class RemoteStorageBackend(StorageBackend):
         data = msg.get("data")
         if msg_type in ("update", "initial_config") and isinstance(data, dict):
             revision = msg.get("revision")
+            generation = msg.get("generation")
             with self._rev_lock:
+                generation_changed = isinstance(generation, str) and generation != self._generation
+                if generation_changed:
+                    self._generation = generation
+                    self._revision = None
+                    self._last_push = None
                 if isinstance(revision, int):
                     if self._revision is not None and revision <= self._revision:
                         # Out-of-order broadcast or the echo of our own save.
@@ -320,6 +363,9 @@ class RemoteStorageBackend(StorageBackend):
             logger.warning("WS: ignored invalid config payload for %r", self.app_name)
 
     def _on_error(self, ws: websocket.WebSocketApp, error: Exception) -> None:
+        with self._ws_lock:
+            self._watch_connected = False
+            self._last_error = str(error)
         status_code = getattr(error, "status_code", None)
         if status_code in _WS_PERMANENT_HTTP_STATUSES:
             logger.error(
@@ -338,6 +384,10 @@ class RemoteStorageBackend(StorageBackend):
         code: Optional[int],
         reason: Optional[str],
     ) -> None:
+        with self._ws_lock:
+            self._watch_connected = False
+            if reason:
+                self._last_error = reason
         if code in _WS_PERMANENT_CLOSE_CODES:
             logger.error(
                 "WS: server rejected the subscription for %r (%s: %s) — not retrying",

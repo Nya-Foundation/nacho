@@ -37,6 +37,7 @@ dependencies = [
 # Server components - REST API and watch server
 server = [
     "fastapi>=0.100.0",
+    "pydantic>=2.0.0",
     "uvicorn>=0.22.0",
     "websockets>=10.0",
 ]
@@ -89,11 +90,10 @@ nacho = "nacho.cli.main:main_cli"  # Updated script path
 
 
 [tool.setuptools]
-package-dir = {"" = "."}  # Use current directory as source root
 include-package-data = true
 
 [tool.setuptools.packages.find]
-where = ["."]  # Root directory for discovery
+where = ["."]
 include = ["nacho*"] # Include nacho and its subpackages
 
 [tool.setuptools.package-data]

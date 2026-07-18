@@ -451,6 +451,13 @@ class Nacho:
             data = copy.deepcopy(self._data)
         return self._validator.check(data)
 
+    @property
+    def schema(self) -> Optional[Dict[str, Any]]:
+        """The currently enforced JSON Schema, or ``None`` when validation is off."""
+        if self._validator is None:
+            return None
+        return self._validator.schema
+
     # ------------------------------------------------------------------
     # Transactions
     # ------------------------------------------------------------------

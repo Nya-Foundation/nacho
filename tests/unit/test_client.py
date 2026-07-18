@@ -137,6 +137,27 @@ def test_config_endpoints_and_revision_header(http, client):
     assert kwargs["params"] == {"revision": 4}
 
 
+def test_app_names_and_config_paths_are_url_encoded(http):
+    client = NachoClient("http://srv", app_name="space name")
+    client.set_path("token?#part", "x")
+    assert _last_call(http)[1] == "http://srv/api/apps/space%20name/config/token%3F%23part"
+
+
+def test_config_read_records_server_generation(http, client):
+    http["get"].append(
+        (
+            "/api/apps/svc/config",
+            FakeResponse(
+                200,
+                {},
+                headers={"X-Nacho-Revision": "1", "X-Nacho-Generation": "epoch-a"},
+            ),
+        )
+    )
+    client.get_config()
+    assert client.last_generation == "epoch-a"
+
+
 def test_app_endpoints(http, client):
     client.create_app(data={"a": 1}, schema={"type": "object"}, description="d")
     method, url, kwargs = _last_call(http)

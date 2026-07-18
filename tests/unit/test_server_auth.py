@@ -5,7 +5,7 @@ import types
 import pytest
 
 from nacho.server.app import NachoOrchestrator
-from nacho.server.auth import ROLE_ADMIN, ROLE_READ, AuthGuard
+from nacho.server.auth import AuthGuard
 
 
 def _request(cookies=None, headers=None):
@@ -72,8 +72,6 @@ class TestKeyValidation:
     def test_non_str_key_raises_typeerror(self, bad):
         with pytest.raises(TypeError, match="api_key must be a str"):
             AuthGuard(api_key=bad)
-        with pytest.raises(TypeError, match="read_only_api_key must be a str"):
-            AuthGuard(read_only_api_key=bad)
 
     def test_error_names_the_offending_type(self):
         with pytest.raises(TypeError, match="got list"):
@@ -85,41 +83,28 @@ class TestKeyValidation:
 
     @pytest.mark.parametrize("falsy", [[], 0, {}])
     def test_falsy_non_str_key_cannot_silently_disable_auth(self, falsy):
-        # The dangerous case: falsy non-str keys skip the orchestrator's
-        # `if api_key or read_only_api_key` guard, so without validation the
-        # server would come up entirely unauthenticated.
+        # The dangerous case: a falsy non-str key skips the orchestrator's
+        # `if api_key` guard, so without validation the server would come up
+        # entirely unauthenticated.
         with pytest.raises(TypeError):
             NachoOrchestrator(api_key=falsy)
-        with pytest.raises(TypeError):
-            NachoOrchestrator(read_only_api_key=falsy)
 
     def test_orchestrator_rejects_non_str_key(self):
         with pytest.raises(TypeError, match="api_key must be a str or None, got list"):
             NachoOrchestrator(api_key=["admin-key"])
 
 
-class TestReadOnlyKey:
-    def test_roles_for_each_key(self):
-        guard = AuthGuard(api_key="admin-key", read_only_api_key="ro-key")
-        assert guard.role_for_token("admin-key") == ROLE_ADMIN
-        assert guard.role_for_token("Bearer ro-key") == ROLE_READ
-        assert guard.role_for_token("wrong") is None
-        assert guard.role_for_token(None) is None
+class TestSingleKeyGrantsFullAccess:
+    """Access is all-or-nothing: there are no roles and no second key."""
 
-    def test_read_only_key_alone_enables_auth_but_never_admin(self):
-        guard = AuthGuard(read_only_api_key="ro-key")
-        assert guard.enabled is True
-        assert guard.role_for_token("ro-key") == ROLE_READ
-        assert guard.verify_token("ro-key") is False  # not full access
+    def test_the_key_authenticates_reads_and_writes_alike(self):
+        guard = AuthGuard(api_key="the-key")
+        assert guard.verify_token("the-key") is True
+        assert guard.verify_token("Bearer the-key") is True
+        assert guard.verify_token("some-other-key") is False
 
-    def test_request_role_prefers_admin_across_credential_sources(self):
-        guard = AuthGuard(api_key="admin-key", read_only_api_key="ro-key")
-        request = _request(
-            cookies={"NACHO_api_key": "ro-key"},
-            headers={"Authorization": "Bearer admin-key"},
-        )
-        assert guard.role_for_request(request) == ROLE_ADMIN
-
-    def test_websocket_accepts_read_only_key(self):
-        guard = AuthGuard(api_key="admin-key", read_only_api_key="ro-key")
-        assert guard.verify_websocket(_request(cookies={"NACHO_api_key": "ro-key"})) is True
+    def test_guard_exposes_no_role_api(self):
+        guard = AuthGuard(api_key="the-key")
+        for removed in ("role_for_token", "role_for_cookie", "role_for_request"):
+            assert not hasattr(guard, removed)
+        assert not hasattr(guard, "read_only_api_key")

@@ -95,7 +95,7 @@ def select_default_app(page):
     expect(page.locator(EDITOR)).to_be_visible()
     # The live-update tests require the WebSocket to be connected before an
     # external write happens, otherwise the broadcast is missed.
-    expect(page.locator("#live-label")).to_have_text("live")
+    expect(page.locator("#live-label")).to_have_text("Live")
 
 
 # --------------------------------------------------------------------------- #
@@ -110,6 +110,27 @@ def test_ui_loads_without_auth(make_live_server, new_page):
     expect(page.locator("#app-view")).to_be_visible()
     expect(page.locator("#connect-view")).to_be_hidden()
     expect(page.locator("#app-list .app-item .app-name")).to_have_text("default")
+    # An open server has no session to end; sending users to the API-key form
+    # here would be a dead end. API docs remain directly available.
+    expect(page.locator("#disconnect-btn")).to_be_hidden()
+    expect(page.locator("#docs-link")).to_have_attribute("href", "docs")
+
+
+def test_desktop_app_navigation_collapses_and_persists(make_live_server, new_page):
+    """The app index can get out of the way for wide configuration editing."""
+    server = make_live_server()
+    page = new_page()
+    open_app_view(page, server.url)
+
+    expect(page.locator("#nav-toggle")).to_have_attribute("aria-expanded", "true")
+    page.click("#nav-toggle")
+    expect(page.locator("#nav-toggle")).to_have_attribute("aria-expanded", "false")
+    expect(page.locator("#app-index")).to_have_css("visibility", "hidden")
+
+    page.reload()
+    expect(page.locator("#app-view")).to_be_visible()
+    expect(page.locator("#nav-toggle")).to_have_attribute("aria-expanded", "false")
+    expect(page.locator("#app-index")).to_have_css("visibility", "hidden")
 
 
 def test_auth_flow_wrong_then_right_key(make_live_server, new_page):
@@ -129,6 +150,7 @@ def test_auth_flow_wrong_then_right_key(make_live_server, new_page):
     page.click("#connect-btn")
     expect(page.locator("#app-view")).to_be_visible()
     expect(page.locator("#app-list .app-item .app-name")).to_have_text("default")
+    expect(page.locator("#disconnect-btn")).to_be_visible()
 
 
 def test_auth_key_with_cookie_hostile_chars(make_live_server, new_page):
@@ -222,6 +244,44 @@ def test_live_update_reaches_clean_editor(make_live_server, new_page):
     expect(page.locator("#editor-status")).to_have_text("Saved")
 
 
+def test_remote_schema_and_metadata_updates_refresh_open_app(make_live_server, new_page):
+    """WS state frames keep schema and app details fresh, not only config text."""
+    server = make_live_server()
+    page = new_page()
+    open_app_view(page, server.url)
+    select_default_app(page)
+
+    rest(
+        server.url + "/api/apps/default/metadata",
+        method="PATCH",
+        body={"description": "Changed elsewhere", "revision": 1},
+    )
+    expect(page.locator("#app-description")).to_have_text("Changed elsewhere")
+    expect(page.locator("#rev-label")).to_have_text("2")
+
+    schema = {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+    rest(
+        server.url + "/api/apps/default/schema",
+        method="PUT",
+        body={"schema": schema, "revision": 2},
+    )
+    expect(page.locator("#schema-flag")).to_have_text("Schema attached")
+    expect(page.locator("#rev-label")).to_have_text("3")
+
+    page.click('.tab[data-tab="schema"]')
+    expect(page.locator("#schema-host textarea.code-input")).to_have_value(
+        json.dumps(schema, indent=2)
+    )
+
+    rest(
+        server.url + "/api/apps/default/schema",
+        method="PUT",
+        body={"schema": None, "revision": 3},
+    )
+    expect(page.locator("#schema-flag")).to_have_text("No schema")
+    expect(page.locator("#schema-host textarea.code-input")).to_have_value("")
+
+
 def test_dirty_editor_survives_remote_update_then_conflicts(make_live_server, new_page):
     """A WS update over a dirty editor warns, and Save then hits the 409 flow."""
     server = make_live_server()
@@ -236,13 +296,13 @@ def test_dirty_editor_survives_remote_update_then_conflicts(make_live_server, ne
 
     # The UI must warn but keep the local edits and the OLD revision.
     warn = page.locator("#config-notice .notice.warn")
-    expect(warn).to_contain_text("changed on the server")
+    expect(warn).to_contain_text("Someone else just saved this app")
     expect(page.locator(EDITOR)).to_have_value('{"mine": "local-edit"}')
     expect(page.locator("#rev-label")).to_have_text("1")
 
     # Saving now must surface a revision conflict, not silently overwrite.
     page.click("#save-btn")
-    expect(warn).to_contain_text("Revision conflict")
+    expect(warn).to_contain_text("Someone else saved first")
     expect(page.locator("#conflict-reload")).to_be_visible()
 
     # The external writer's value survived on the server.
@@ -301,10 +361,10 @@ def test_ui_reconnects_after_server_restart(make_live_server, new_page):
     select_default_app(page)
 
     server.stop()
-    expect(page.locator("#live-label")).to_have_text("offline")
+    expect(page.locator("#live-label")).to_have_text("Reconnecting…")
 
     make_live_server(port=server.port, data_dir=server.data_dir)
-    expect(page.locator("#live-label")).to_have_text("live")
+    expect(page.locator("#live-label")).to_have_text("Live")
 
     # Live updates work again after the reconnect, not just the status dot.
     put_config(server.url, {"revived": True})
