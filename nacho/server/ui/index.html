@@ -881,9 +881,12 @@ async function api(method, path, body) {
 
 function errText(err) {
   // 401 and 403 are different problems and need different advice: a rejected
-  // key is fixable by signing in again, a read-only key is not.
+  // key is fixable by signing in again, a read-only server is not.
   if (err.status === 401) return "Your API key was rejected. Check the key, then sign in again.";
-  if (err.status === 403) return "This API key can read but not change anything.";
+  if (err.status === 403) {
+    return "This server is running in read-only mode, so configuration can be " +
+      "viewed but not changed.";
+  }
   const d = err.detail;
   if (d == null) {
     return err.status
@@ -1938,9 +1941,10 @@ async function restoreHistorySnapshot(revision) {
       "/api/apps/" + encodeURIComponent(state.selected) + "/rollback",
       { revision: revision, expected_revision: state.revision });
     await refreshApps();
-    // Land on the configuration that is now live, rather than leaving the
-    // operator on a table looking at the revision they just replaced.
-    state.activeTab = "config";
+    // Stay on History. The operator restored from this table, and the table
+    // now reports the result in place — the new revision appears as current,
+    // with its own diff. Switching tabs would be a context change nobody
+    // asked for.
     await loadAppDetail(state.selected);
     toast("Restored r" + revision + " — now r" + state.revision + ".");
   } catch (err) {

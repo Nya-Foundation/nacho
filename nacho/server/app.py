@@ -67,7 +67,6 @@ class NachoOrchestrator:
         data_dir: Optional[Union[str, Path]] = None,
         logger: Optional[logging.Logger] = None,
         history_limit: int = 50,
-        read_only_api_key: Optional[str] = None,
     ) -> None:
         self.read_only = read_only
         # No CORS by default: the bundled UI is same-origin and SDK/CLI
@@ -78,12 +77,7 @@ class NachoOrchestrator:
         # (e.g. an empty list from a caller's own config) would otherwise
         # skip AuthGuard entirely and leave the server unauthenticated.
         api_key = validate_api_key("api_key", api_key)
-        read_only_api_key = validate_api_key("read_only_api_key", read_only_api_key)
-        self.auth = (
-            AuthGuard(api_key=api_key, read_only_api_key=read_only_api_key)
-            if (api_key or read_only_api_key)
-            else None
-        )
+        self.auth = AuthGuard(api_key=api_key) if api_key else None
         self.manager = AppManager(
             data_dir=Path(data_dir) if data_dir else None,
             logger=self.logger,

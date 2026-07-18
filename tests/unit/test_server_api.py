@@ -105,48 +105,29 @@ def test_auth_protects_api_routes():
         assert response.json() == {"x": 1}
 
 
-def test_read_only_api_key_allows_reads_blocks_writes():
+def test_the_api_key_grants_reads_and_writes_alike():
+    """One key, all-or-nothing: there is no per-key read-only role."""
     orchestrator = NachoOrchestrator(
         apps={"svc": Nacho({"x": 1}, events=True)},
-        api_key="admin-key",
-        read_only_api_key="ro-key",
+        api_key="the-key",
     )
 
     with TestClient(orchestrator.app) as client:
-        ro = {"Authorization": "Bearer ro-key"}
-        assert client.get("/api/apps/svc/config", headers=ro).status_code == 200
-
-        denied = client.put("/api/apps/svc/config", json={"data": {"x": 2}}, headers=ro)
-        assert denied.status_code == 403
-        assert "read-only" in denied.json()["detail"]
-
-        # The admin key still writes; no valid key at all is still a 401.
-        admin = {"Authorization": "Bearer admin-key"}
+        auth = {"Authorization": "Bearer the-key"}
+        assert client.get("/api/apps/svc/config", headers=auth).status_code == 200
         assert (
-            client.put("/api/apps/svc/config", json={"data": {"x": 2}}, headers=admin).status_code
+            client.put("/api/apps/svc/config", json={"data": {"x": 2}}, headers=auth).status_code
             == 200
         )
-        assert client.put("/api/apps/svc/config", json={"data": {"x": 3}}).status_code == 401
-
-        # WebSocket subscriptions are reads: the read-only key is enough.
-        with client.websocket_connect("/ws/svc", headers=ro) as websocket:
+        with client.websocket_connect("/ws/svc", headers=auth) as websocket:
             assert websocket.receive_json()["type"] == "initial_config"
 
-
-def test_read_only_api_key_alone_still_requires_auth():
-    orchestrator = NachoOrchestrator(
-        apps={"svc": Nacho({"x": 1}, events=True)},
-        read_only_api_key="ro-key",
-    )
-
-    with TestClient(orchestrator.app) as client:
+        # Anything else is a 401 — never a 403, which now means read-only mode.
         assert client.get("/api/apps/svc/config").status_code == 401
-        ro = {"Authorization": "Bearer ro-key"}
-        assert client.get("/api/apps/svc/config", headers=ro).status_code == 200
-        # With no admin key configured, nothing can write.
+        wrong = {"Authorization": "Bearer not-the-key"}
         assert (
-            client.put("/api/apps/svc/config", json={"data": {"x": 2}}, headers=ro).status_code
-            == 403
+            client.put("/api/apps/svc/config", json={"data": {"x": 3}}, headers=wrong).status_code
+            == 401
         )
 
 

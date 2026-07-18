@@ -134,7 +134,6 @@ nacho server \
 | `--app-name` | `default` | `--config` 文件对应的应用名称 |
 | `--data-dir` | 无 | 存放通过 API 创建的应用状态和历史记录的目录 |
 | `--api-key` | 无 | 启用 Bearer Token 认证 |
-| `--read-only-api-key` | 无 | 额外的只读访问密钥 |
 | `--history-limit` | `50` | 每个应用保留的修订版本快照数量（`0` 表示禁用历史记录） |
 | `--read-only` | 关闭 | 拒绝所有写入 |
 | `--reload` | 关闭 | 开发用的自动重载 |
@@ -194,7 +193,7 @@ function preauthenticateNacho(key, mountPath = "") {
 }
 ```
 
-只写入该登录用户有权使用的凭据。对于可以读取但不能修改配置的用户，应使用 `--read-only-api-key` 而非管理员密钥 —— UI 会在写入尝试时展示服务器返回的 `403`。
+仅为你的应用已经授权其管理配置的用户写入密钥。该密钥授予完整访问权限，因此若宿主应用希望部分用户只看不改，必须自行实现这一限制——要么不写入密钥，要么只为受信任的用户挂载 UI。
 
 不要通过 URL 传递密钥（`?token=`）：查询字符串会经由浏览器历史记录、`Referer` 请求头和代理日志泄露。
 
@@ -202,7 +201,10 @@ function preauthenticateNacho(key, mountPath = "") {
 
 传入 `--api-key`（或向 `NachoOrchestrator` 传入 `api_key=`）即可为整个 API 启用 Bearer 认证。客户端通过 `Authorization: Bearer <key>` 请求头发送密钥，或使用 UI 为其自身 WebSocket 握手设置的 Cookie。密钥缺失或错误的请求会收到 `401 Unauthorized`。密钥比较采用时序安全（timing-safe）算法。
 
-还可以通过 `--read-only-api-key`（或 `read_only_api_key=`）配置第二个密钥。它可以认证 GET 请求和 WebSocket 订阅，但任何写操作都会收到 `403 Forbidden` —— 把它交给仪表盘、轮询器和只消费配置的服务，写密钥就不会离开真正需要它的运维人员。
+只有一个密钥，访问权限是全有或全无——没有角色，也没有第二个密钥。只读场景由两个相互独立的控制项覆盖：
+
+- **客户端**若不应写入，在构造实例时传入 `read_only=True`；此后任何写操作都会在本地直接抛出 `PermissionError`，无需往返请求。
+- **服务端**若应拒绝一切写入，则以 `--read-only` 启动；此时无论调用方是谁，任何变更都会收到 `403 Forbidden`。
 
 `/`、`/health`、`/ui`、`/docs`、`/redoc` 和 `/openapi.json` 保持公开：API 的接口定义并不是秘密，需要保护的只是其背后的数据。
 

@@ -151,7 +151,6 @@ missed live updates.
 | `--app-name` | `default` | App name for the `--config` file |
 | `--data-dir` | none | Directory for API-created app state and history |
 | `--api-key` | none | Enable bearer-token authentication |
-| `--read-only-api-key` | none | Additional key granting read access only |
 | `--history-limit` | `50` | Revision snapshots kept per app (`0` disables history) |
 | `--read-only` | off | Reject every write |
 | `--reload` | off | Auto-reload for development |
@@ -228,10 +227,10 @@ function preauthenticateNacho(key, mountPath = "") {
 }
 ```
 
-Seed only a credential the signed-in user is entitled to. A user who may
-read configuration but not change it should be given the
-`--read-only-api-key`, not the admin key — the UI surfaces the server's
-`403` responses on write attempts.
+Seed the key only for users your own application has already authorised to
+manage configuration. The key grants full access, so a host application that
+wants some users to look without touching must enforce that itself — by not
+seeding the key, or by mounting the UI only for the users it trusts.
 
 Do not pass the key in the URL (`?token=`): query strings leak through
 browser history, `Referer` headers, and proxy logs.
@@ -244,11 +243,14 @@ authentication for the whole API. Clients send the key either as an
 its own WebSocket handshake. Requests with a missing or wrong key receive
 `401 Unauthorized`. The comparison is timing-safe.
 
-A second key can be added with `--read-only-api-key` (or
-`read_only_api_key=`). It authenticates GETs and WebSocket subscriptions but
-receives `403 Forbidden` on any write — hand it to dashboards, pollers, and
-services that only consume configuration, so the write credential never
-leaves the operators who need it.
+There is one key and access is all-or-nothing — no roles, no second key.
+Two separate controls cover the read-only cases:
+
+- A **client** that should never write constructs its instance with
+  `read_only=True`; every mutating call then raises `PermissionError`
+  locally, without a round trip.
+- A **server** that should refuse every write runs with `--read-only`, which
+  answers `403 Forbidden` to any mutation regardless of the caller.
 
 `/`, `/health`, `/ui`, `/docs`, `/redoc`, and `/openapi.json` stay public: the
 API surface is not a secret, only the data behind it.

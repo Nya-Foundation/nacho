@@ -157,9 +157,9 @@ def test_cli_auth_flow(make_live_server):
     assert json.loads(fetched.stdout) == 42
 
 
-def test_cli_read_only_api_key(make_live_server):
-    """A read-only key can read and watch but never write."""
-    server = make_live_server(api_key="sekret", extra_args=("--read-only-api-key", "ro-key"))
+def test_cli_wrong_api_key_is_rejected(make_live_server):
+    """There is one key; anything else fails, for reads and writes alike."""
+    server = make_live_server(api_key="sekret")
 
     seeded = _run(
         "set",
@@ -174,34 +174,17 @@ def test_cli_read_only_api_key(make_live_server):
     )
     assert seeded.returncode == 0, seeded.stderr
 
-    fetched = _run(
-        "get",
-        "answer",
-        "--format",
-        "json",
-        "--remote",
-        server.url,
-        "--app-name",
-        "default",
-        "--api-key",
-        "ro-key",
-    )
-    assert fetched.returncode == 0, fetched.stderr
-    assert json.loads(fetched.stdout) == 42
-
-    denied = _run(
-        "set",
-        "answer",
-        "43",
-        "--remote",
-        server.url,
-        "--app-name",
-        "default",
-        "--api-key",
-        "ro-key",
-    )
-    assert denied.returncode == 5  # auth-failure exit code
-    assert "read-only" in denied.stderr
+    for command in (("get", "answer"), ("set", "answer", "43")):
+        denied = _run(
+            *command,
+            "--remote",
+            server.url,
+            "--app-name",
+            "default",
+            "--api-key",
+            "not-sekret",
+        )
+        assert denied.returncode == 5, denied.stderr  # auth-failure exit code
 
 
 def test_cli_history_diff_flow(live_server):
