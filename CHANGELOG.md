@@ -1,6 +1,100 @@
 # CHANGELOG
 
 
+## v1.0.0 (2026-07-18)
+
+### Bug Fixes
+
+- Harden persistence and restart recovery
+  ([`0f0fd81`](https://github.com/Nya-Foundation/nacho/commit/0f0fd813e8506b7b0e02dab645f279a9ba3421cc))
+
+Preserve revision monotonicity, make persisted mutations atomic, and scope client synchronization to
+  server generations. Add SDK, UI, E2E, and container regression coverage while tightening packaging
+  and deployment defaults.
+
+- Ui refine
+  ([`323f1de`](https://github.com/Nya-Foundation/nacho/commit/323f1dea9e38f0d9392c0d75c369df2358e33342))
+
+### Features
+
+- **server**: Single API key, no read-only key and no roles
+  ([`c6538ca`](https://github.com/Nya-Foundation/nacho/commit/c6538ca2738fa65f03b8102ee9807bd87eec3de7))
+
+Access is now all-or-nothing. The `--read-only-api-key` flag, the `read_only_api_key=` argument, and
+  the admin/read role split inside AuthGuard are removed; one key authenticates every request, and a
+  credential that is not that key gets 401 for reads and writes alike.
+
+Read-only remains available where it belongs, as two independent controls that need no roles:
+
+- A client that should never write builds its instance with `read_only=True`, which raises
+  PermissionError locally with no round trip. This works over RemoteStorageBackend as well as local
+  files, so a service can hold itself to reads without the server knowing. - A deployment that must
+  refuse every write runs with `--read-only`, which answers 403 to any mutation regardless of
+  caller.
+
+AuthMiddleware no longer needs a safe-method table, since the decision is a single boolean. A 403
+  from the API now unambiguously means read-only mode, so the UI reports it that way.
+
+BREAKING CHANGE: `--read-only-api-key` and the `read_only_api_key` argument to
+  NachoOrchestrator/AuthGuard are gone. Deployments that issued a read-only key should either drop
+  it and share the single API key, or keep writes out by running that server with `--read-only`.
+  Consumers that only read should pass `read_only=True` when constructing Nacho.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01W3nMMEK466hdCJTF4R9Hwr
+
+- **ui**: History diffs, safer edit flows, and an accessible editor
+  ([`be5ff44`](https://github.com/Nya-Foundation/nacho/commit/be5ff44d5c83388337f14e2c3745b453c5685e8f))
+
+Polish pass over the management UI following a four-lens design review (interaction, visual,
+  accessibility, information design).
+
+Correctness and data loss: - Validate no longer reports "valid against the schema" for apps that
+  have no schema; it now says the payload parses and offers to add one. - Save renders schema
+  violations as a list with the failing path set apart, matching Validate. Previously the same
+  server response was flattened into a run-on paragraph on the path operators actually take. - Guard
+  the four unguarded discard paths against confirmDiscard(): the 409 "load the server's version"
+  link, refresh/Discard when the *other* tab holds a draft, and backdrop/Escape dismissal of the
+  new-app modal (whose fields are now restored if the user keeps editing). Renaming an app preserves
+  in-flight edits instead of dropping them. - errText() distinguishes 401 from 403; a valid
+  read-only key no longer reports "check your API key".
+
+Accessibility: - The code editor was an inescapable keyboard trap (WCAG 2.1.2): Tab was swallowed
+  unconditionally. Escape now disarms tab capture, Shift+Tab always escapes, and a hint describes
+  the escape hatch via aria-describedby. - Restore focus after modals close and after Save disables
+  itself. - Notice containers are live regions; the tabs implement the full APG contract (roving
+  tabindex, selection follows focus, Home/End, aria-controls); the selected app exposes
+  aria-current; history actions are labelled. - Retune --muted, --faint, --rule-input and a new
+  --amber-mark so every token meets its WCAG floor on both canvases.
+
+Information design: - History gains diffs. Each row summarises itself against its predecessor (+n -n
+  and the changed keys), and expanding a revision shows a unified diff rather than a full document
+  dump, with raw snapshot and compare-with-current one click away. The Restore dialog states what
+  the rollback will actually change. The comparison mirrors `nacho history diff` exactly (sorted
+  keys, indent 2), so UI and CLI describe a revision identically -- no new endpoint required. -
+  Timestamps are relative with the exact stamp on hover, replacing raw ISO-8601 with microseconds. -
+  Sidebar gains a filter past 8 apps and shows elapsed time, which ranks across apps, rather than a
+  revision number, which does not.
+
+Visual: - Reclaim the dead space at wide viewports as a marginalia rail carrying the app's standing
+  facts against a hairline; the editor grows into the width and now fills the viewport exactly with
+  no residual scroll. - Reserve amber for state that changes under you (live, unsaved, current
+  revision) and make positional markers ink -- the dirty state previously fired six amber dots at
+  once. - Disabled Save empties to an outline instead of a heavy grey slab.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01W3nMMEK466hdCJTF4R9Hwr
+
+### Breaking Changes
+
+- **server**: `--read-only-api-key` and the `read_only_api_key` argument to
+  NachoOrchestrator/AuthGuard are gone. Deployments that issued a read-only key should either drop
+  it and share the single API key, or keep writes out by running that server with `--read-only`.
+  Consumers that only read should pass `read_only=True` when constructing Nacho.
+
+
 ## v0.1.1 (2026-07-18)
 
 ### Bug Fixes
