@@ -199,6 +199,43 @@ When the server runs with `--api-key`, the UI prompts for the key on first
 load. The `/ui` page itself is public so the sign-in screen can load; every
 API call behind it requires authentication.
 
+#### Pre-authenticating an embedded UI
+
+When the orchestrator is mounted inside a host application that already has
+its own session auth, users should not face a second login. The UI reads its
+credential from two same-origin browser stores, and **these two names are a
+stable contract** — seed them before navigating to `/ui` and the UI comes up
+already signed in:
+
+| Store | Name | Used for |
+|---|---|---|
+| `localStorage` | `nacho_api_key` | `Authorization: Bearer` header on REST calls |
+| Cookie | `NACHO_api_key` | The WebSocket handshake, which cannot send headers |
+
+The cookie value must be URL-encoded, and its path must match the mount
+point — the UI derives it as `location.pathname` with a trailing `/ui`
+removed (so `/config/ui` yields a cookie path of `/config`, and a top-level
+mount yields `/`):
+
+```js
+// Run on your own login page, same origin as the mounted UI.
+function preauthenticateNacho(key, mountPath = "") {
+  localStorage.setItem("nacho_api_key", key);
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie =
+    "NACHO_api_key=" + encodeURIComponent(key) +
+    "; path=" + (mountPath || "/") + "; SameSite=Strict" + secure;
+}
+```
+
+Seed only a credential the signed-in user is entitled to. A user who may
+read configuration but not change it should be given the
+`--read-only-api-key`, not the admin key — the UI surfaces the server's
+`403` responses on write attempts.
+
+Do not pass the key in the URL (`?token=`): query strings leak through
+browser history, `Referer` headers, and proxy logs.
+
 ### Authentication
 
 Passing `--api-key` (or `api_key=` to `NachoOrchestrator`) enables bearer

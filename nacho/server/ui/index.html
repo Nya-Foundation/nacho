@@ -581,6 +581,18 @@ const BASE = location.pathname.replace(/\/ui\/?$/, "");
 const COOKIE_PATH = BASE || "/";
 
 /* ===================================================================== */
+/* PUBLIC EMBEDDING CONTRACT — do not rename without a major release.     */
+/* Host applications that mount this UI behind their own session auth     */
+/* pre-authenticate it by seeding these two same-origin stores before     */
+/* navigating here, so their users are not asked to log in twice:         */
+/*   localStorage["nacho_api_key"]  → REST Authorization: Bearer header   */
+/*   cookie "NACHO_api_key" (URL-encoded, path=COOKIE_PATH above)         */
+/*                                   → WebSocket handshake, which cannot  */
+/*                                     carry headers                      */
+/* Documented in README.md, "Pre-authenticating an embedded UI".          */
+/* ===================================================================== */
+
+/* ===================================================================== */
 /* State                                                                  */
 /* ===================================================================== */
 const FORMATS = ["json", "yaml", "toml"];

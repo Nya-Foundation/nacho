@@ -201,6 +201,42 @@ app.mount("/config", orchestrator.app)   # /config 配下に設定 API をマウ
 入力を求めます。サインイン画面を表示できるように `/ui` ページ自体は公開
 されていますが、その背後のすべての API 呼び出しには認証が必要です。
 
+#### 埋め込み UI の事前認証
+
+オーケストレーターを独自のセッション認証を持つホストアプリケーションに
+マウントする場合、ユーザーに二度目のログインを求めるべきではありません。
+UI は同一オリジンの 2 つのブラウザストアから認証情報を読み取ります。
+**この 2 つの名前は安定した契約です** — `/ui` に遷移する前にこれらを
+書き込めば、UI はサインイン済みの状態で起動します:
+
+| ストア | 名前 | 用途 |
+|---|---|---|
+| `localStorage` | `nacho_api_key` | REST 呼び出しの `Authorization: Bearer` ヘッダー |
+| Cookie | `NACHO_api_key` | ヘッダーを送信できない WebSocket ハンドシェイク |
+
+Cookie の値は URL エンコードが必要で、その path はマウントポイントと一致
+させます。UI は `location.pathname` から末尾の `/ui` を除いてこれを導出
+します（`/config/ui` なら cookie path は `/config`、トップレベルなら `/`）:
+
+```js
+// マウントされた UI と同一オリジンの、自前のログインページで実行します。
+function preauthenticateNacho(key, mountPath = "") {
+  localStorage.setItem("nacho_api_key", key);
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie =
+    "NACHO_api_key=" + encodeURIComponent(key) +
+    "; path=" + (mountPath || "/") + "; SameSite=Strict" + secure;
+}
+```
+
+サインイン中のユーザーに与えてよい認証情報だけを書き込んでください。設定を
+読めても変更してはいけないユーザーには、管理者キーではなく
+`--read-only-api-key` を渡します — 書き込み時にはサーバーの `403` が UI に
+表示されます。
+
+キーを URL（`?token=`）で渡さないでください: クエリ文字列はブラウザ履歴、
+`Referer` ヘッダー、プロキシログを通じて漏洩します。
+
 ### 認証
 
 `--api-key`（または `NachoOrchestrator` への `api_key=`）を指定すると、
