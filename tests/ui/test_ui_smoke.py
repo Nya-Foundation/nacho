@@ -153,6 +153,40 @@ def test_auth_key_with_cookie_hostile_chars(make_live_server, new_page):
     expect(page.locator(EDITOR)).to_have_value(json.dumps({"guarded": True}, indent=2))
 
 
+def test_preauthenticated_embedding_contract(make_live_server, new_page):
+    """Seeding localStorage + cookie signs the UI in with no login form.
+
+    This pins the documented embedding contract (README: "Pre-authenticating
+    an embedded UI"). Host apps that mount the orchestrator behind their own
+    session auth depend on these exact names; renaming either would silently
+    regress every embedder to a double login.
+    """
+    key = "embedded-host-key"
+    server = make_live_server(api_key=key)
+    page = new_page()
+
+    # Seed both stores from the origin, as a host login page would, before
+    # the UI ever loads. /ui is public, so this can run on the page itself.
+    page.goto(server.url + "/ui")
+    page.evaluate(
+        """(key) => {
+            localStorage.setItem("nacho_api_key", key);
+            document.cookie = "NACHO_api_key=" + encodeURIComponent(key) +
+                "; path=/; SameSite=Strict";
+        }""",
+        key,
+    )
+    page.reload()
+
+    # No sign-in screen, and the WebSocket authenticated from the cookie.
+    expect(page.locator("#connect-view")).to_be_hidden()
+    expect(page.locator("#app-view")).to_be_visible()
+    select_default_app(page)
+
+    put_config(server.url, {"preauth": True}, api_key=key)
+    expect(page.locator(EDITOR)).to_have_value(json.dumps({"preauth": True}, indent=2))
+
+
 def test_edit_and_save_round_trip(make_live_server, new_page):
     """Type a config, Save, see success feedback, verify via REST."""
     server = make_live_server()

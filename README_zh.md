@@ -172,6 +172,32 @@ app.mount("/config", orchestrator.app)   # 配置 API 位于 /config 之下
 
 当服务器以 `--api-key` 运行时，UI 会在首次加载时提示输入密钥。`/ui` 页面本身是公开的，以便登录界面能够加载；其背后的每个 API 调用都需要认证。
 
+#### 为嵌入式 UI 预先认证
+
+当编排器被挂载到已有自身会话认证的宿主应用中时，用户不应再次登录。UI 从两个同源浏览器存储中读取凭据，**这两个名称是稳定契约** —— 在跳转到 `/ui` 之前写入它们，UI 即可直接进入已登录状态：
+
+| 存储 | 名称 | 用途 |
+|---|---|---|
+| `localStorage` | `nacho_api_key` | REST 调用的 `Authorization: Bearer` 请求头 |
+| Cookie | `NACHO_api_key` | 无法发送请求头的 WebSocket 握手 |
+
+Cookie 的值必须经过 URL 编码，其 path 必须与挂载点一致 —— UI 通过将 `location.pathname` 去掉结尾的 `/ui` 得到该路径（因此 `/config/ui` 对应 cookie path `/config`，顶层挂载则对应 `/`）：
+
+```js
+// 在你自己的登录页面上运行，与挂载的 UI 同源。
+function preauthenticateNacho(key, mountPath = "") {
+  localStorage.setItem("nacho_api_key", key);
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie =
+    "NACHO_api_key=" + encodeURIComponent(key) +
+    "; path=" + (mountPath || "/") + "; SameSite=Strict" + secure;
+}
+```
+
+只写入该登录用户有权使用的凭据。对于可以读取但不能修改配置的用户，应使用 `--read-only-api-key` 而非管理员密钥 —— UI 会在写入尝试时展示服务器返回的 `403`。
+
+不要通过 URL 传递密钥（`?token=`）：查询字符串会经由浏览器历史记录、`Referer` 请求头和代理日志泄露。
+
 ### 认证
 
 传入 `--api-key`（或向 `NachoOrchestrator` 传入 `api_key=`）即可为整个 API 启用 Bearer 认证。客户端通过 `Authorization: Bearer <key>` 请求头发送密钥，或使用 UI 为其自身 WebSocket 握手设置的 Cookie。密钥缺失或错误的请求会收到 `401 Unauthorized`。密钥比较采用时序安全（timing-safe）算法。

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hmac
 import logging
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 from urllib.parse import unquote
 
 from fastapi import Request, WebSocket
@@ -25,6 +25,21 @@ ROLE_ADMIN = "admin"  # full read/write access
 ROLE_READ = "read"  # safe HTTP methods and WebSocket subscriptions only
 
 
+def validate_api_key(name: str, value: Any) -> Optional[str]:
+    """Return *value* if it is a usable API key, raising TypeError otherwise.
+
+    Keys are compared as UTF-8 bytes, so a non-str key would only fail when
+    someone first presents a *valid* credential — an opaque 500 long after
+    the misconfiguration. Worse, a falsy non-str (``[]``, ``0``) would leave
+    the server silently unauthenticated. Both are caught here instead.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a str or None, got {type(value).__name__}")
+    return value
+
+
 class AuthGuard:
     """Verifies API keys from headers, cookies, and WebSocket handshakes.
 
@@ -39,8 +54,8 @@ class AuthGuard:
         api_key: Optional[str] = None,
         read_only_api_key: Optional[str] = None,
     ) -> None:
-        self.api_key = api_key
-        self.read_only_api_key = read_only_api_key
+        self.api_key = validate_api_key("api_key", api_key)
+        self.read_only_api_key = validate_api_key("read_only_api_key", read_only_api_key)
 
     @property
     def enabled(self) -> bool:
