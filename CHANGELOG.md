@@ -1,6 +1,52 @@
 # CHANGELOG
 
 
+## v0.1.1 (2026-07-18)
+
+### Bug Fixes
+
+- **server**: Reject non-str API keys at construction
+  ([`1ccfbed`](https://github.com/Nya-Foundation/nacho/commit/1ccfbedae46de9c9b0fdc89acbe7877a44ee841c))
+
+Keys are compared as UTF-8 bytes, so a non-str api_key raised AttributeError deep inside hmac
+  comparison — but only once a caller presented a *valid* credential, surfacing as an opaque 500
+  long after the misconfiguration. Unauthenticated requests returned early at `if not token`, so a
+  login smoke test looked healthy.
+
+A falsy non-str key was worse: `api_key=[]` is falsy, so the orchestrator skipped AuthGuard entirely
+  and served the API with no authentication at all, reporting auth_required=false on /health. A
+  guard inside AuthGuard.__init__ alone would not catch that, so validate_api_key() also runs in
+  NachoOrchestrator before the truthiness check.
+
+Reported by a downstream integrator who passed their own list-shaped api_key config straight
+  through.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017Nbw4HkcW6Jb1uEazKcosX
+
+### Documentation
+
+- **ui**: Document the pre-authentication embedding contract (en/zh/ja)
+  ([`af9fb94`](https://github.com/Nya-Foundation/nacho/commit/af9fb94d47afcd7de4b7a839d333a3b3bd5ca52b))
+
+Host applications that mount the orchestrator behind their own session auth were reverse-engineering
+  the SPA to avoid a second login. The two names they depend on are now a documented, tested
+  contract: localStorage["nacho_api_key"] for the REST bearer header, and the URL-encoded
+  NACHO_api_key cookie for the WebSocket handshake, whose path follows the mount point.
+
+Marked as a public contract at the source so it is not renamed casually, and pinned by a UI test
+  that seeds both stores and asserts no sign-in screen appears and live updates flow.
+
+Deliberately not adding a `?token=` query parameter: query strings leak through browser history,
+  Referer headers, and proxy logs. The docs say so, and point read-only embedders at
+  --read-only-api-key.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017Nbw4HkcW6Jb1uEazKcosX
+
+
 ## v0.1.0 (2026-07-18)
 
 ### Bug Fixes
