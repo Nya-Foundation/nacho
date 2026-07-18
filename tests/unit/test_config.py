@@ -92,7 +92,7 @@ class TestReadAPI:
     def test_get_returns_copy(self, config):
         d = config.get()
         d["injected"] = True
-        assert "injected" not in config.data
+        assert "injected" not in config.get_all()
 
     def test_get_missing_default(self, config):
         assert config.get("nonexistent", "fallback") == "fallback"
@@ -135,15 +135,7 @@ class TestReadAPI:
     def test_get_all_returns_deep_copy(self, config):
         d = config.get_all()
         d["hack"] = True
-        assert "hack" not in config.data
-
-    def test_data_property_is_defensive_and_read_only(self, config):
-        data = config.data
-        data["debug"] = False
-
-        assert config.get("debug") is True
-        with pytest.raises(AttributeError):
-            config.data = {}
+        assert "hack" not in config.get_all()
 
     def test_get_nested_container_returns_copy(self, config):
         db = config.get("db")
@@ -576,11 +568,6 @@ class TestConfigEdgeCases:
     def test_check_without_schema_returns_empty(self):
         assert Nacho({"a": 1}).check({"anything": True}) == []
 
-    def test_event_pipeline_and_disabled_properties(self):
-        c = Nacho({"a": 1}, events=True)
-        assert c.event_pipeline is not None
-        assert isinstance(c.event_disabled, bool)
-
     def test_remote_push_replaces_config(self):
         c = Nacho({"a": 1})
         c._on_remote_push({"a": 2, "b": 3})
@@ -623,3 +610,36 @@ class TestConfigEdgeCases:
         c = Nacho(storage=storage)
         with pytest.raises(StorageError):
             c.load()
+
+
+class TestFreshFileConstruction:
+    def test_fresh_json_file_constructs_and_saves(self, tmp_path):
+        p = tmp_path / "new.json"
+        c = Nacho(str(p))
+        assert c.get_all() == {}
+        c.set("a.b", 1)
+        c.save()
+        assert Nacho(str(p)).get("a.b") == 1
+
+    def test_read_only_instance_does_not_create_the_file(self, tmp_path):
+        p = tmp_path / "ro.yaml"
+        Nacho(str(p), read_only=True)
+        assert not p.exists()
+
+
+class TestTransactionIsolation:
+    def test_interleaved_write_survives_commit(self):
+        c = Nacho({"a": 1})
+        with c.transaction() as txn:
+            txn.set("b", 2)
+            c.set("other", 99)  # lands while the transaction is open
+        assert c.get("b") == 2
+        assert c.get("other") == 99
+
+    def test_transaction_discarded_on_exception(self):
+        c = Nacho({"a": 1})
+        with pytest.raises(RuntimeError):
+            with c.transaction() as txn:
+                txn.set("b", 2)
+                raise RuntimeError("boom")
+        assert c.get("b") is None

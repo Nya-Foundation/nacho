@@ -1,13 +1,13 @@
 """REST API server module for Nacho configuration management.
 
 This module provides the FastAPI application used by the Nacho server.
-Install with: pip install nacho[server]
+Install with: pip install nacho-python[server]
 """
 
 # Check for server dependencies
 try:
-    import fastapi
-    import uvicorn
+    import fastapi  # noqa: F401
+    import uvicorn  # noqa: F401
 
     HAS_SERVER_DEPS = True
 except ImportError:  # pragma: no cover - optional 'server' extra not installed
@@ -28,7 +28,7 @@ else:  # pragma: no cover - optional 'server' extra not installed
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Web server features require additional dependencies. "
-                "Install them with: pip install nacho[server]"
+                "Install them with: pip install nacho-python[server]"
             )
 
 

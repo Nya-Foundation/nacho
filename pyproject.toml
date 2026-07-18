@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 # Core dependencies only - minimal install
@@ -67,9 +68,13 @@ dev = [
 ]
 
 lint = [
-    "flake8>=6.0.0",
-    "black>=23.0.0",
-    "isort>=5.0.0",
+    "ruff>=0.5.0",
+]
+
+# Browser-driven UI tests (pytest -m ui); needs `playwright install chromium`
+uitest = [
+    "playwright>=1.45",
+    "pytest-playwright>=0.5.0",
 ]
 
 [project.urls]
@@ -97,13 +102,18 @@ include = ["nacho*"] # Include nacho and its subpackages
 [tool.setuptools.exclude-package-data]
 "*" = ["*.pyc", "*.pyo", "__pycache__/*"]
 
-[tool.black]
+[tool.ruff]
 line-length = 100
-target-version = ["py39"]
+target-version = "py39"
 
-[tool.isort]
-profile = "black"
-line_length = 100
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "UP006", "UP007", "UP035", "UP045",  # keep typing.Dict/Optional style on py39
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B017"]
 
 
 [tool.pytest.ini_options]
@@ -112,7 +122,7 @@ python_files = "test_*.py"
 # Default run: fast tests only. Heavier suites are opt-in, e.g.
 #   pytest -m integration      pytest -m e2e      pytest -m docker
 #   pytest -m ""               (run everything)
-addopts = '-m "not integration and not e2e and not docker" --cov=nacho --cov-report=term-missing --cov-fail-under=95 --strict-markers'
+addopts = '-m "not integration and not e2e and not docker and not ui" --cov=nacho --cov-report=term-missing --cov-fail-under=95 --strict-markers'
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "unit: fast tests with no external dependencies",
@@ -120,6 +130,7 @@ markers = [
     "integration: tests requiring external services",
     "e2e: full end-to-end tests",
     "docker: tests requiring Docker",
+    "ui: browser-driven web UI tests (requires playwright)",
 ]
 
 [tool.coverage.run]
@@ -133,8 +144,6 @@ exclude_lines = [
     "if self.debug:",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
-    "pass",
-    "raise ImportError"
 ]
 
 

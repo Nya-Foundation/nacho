@@ -24,7 +24,8 @@ def _http_json(method, url, payload=None):
 def test_rest_api_app_lifecycle(live_server):
     """Create, read, update and delete an app over the REST API."""
     status, _ = _http_json(
-        "POST", live_server + "/api/apps",
+        "POST",
+        live_server + "/api/apps",
         {"name": "billing", "data": {"currency": "USD"}},
     )
     assert status == 201

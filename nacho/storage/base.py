@@ -10,6 +10,44 @@ class StorageError(Exception):
     """Raised when a storage operation fails."""
 
 
+class RemoteError(StorageError):
+    """A remote Nacho server operation failed.
+
+    Carries the HTTP status and the server's JSON ``detail`` payload when
+    available, so callers see the actual reason (schema violations,
+    conflict info) instead of a bare status code.
+    """
+
+    def __init__(self, message: str, *, status: Optional[int] = None, detail: Any = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.detail = detail
+
+
+class AuthError(RemoteError):
+    """The server rejected the request's credentials (401/403)."""
+
+
+class NotFoundError(RemoteError):
+    """The requested app, path, or revision does not exist (404)."""
+
+
+class ConflictError(RemoteError):
+    """A revision-checked write lost the race (409)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        detail: Any = None,
+        expected: Optional[int] = None,
+        actual: Optional[int] = None,
+    ) -> None:
+        super().__init__(message, status=409, detail=detail)
+        self.expected = expected
+        self.actual = actual
+
+
 class StorageBackend(ABC):
     """Pluggable persistence layer for Nacho.
 
@@ -29,5 +67,5 @@ class StorageBackend(ABC):
     def save(self, data: Dict[str, Any]) -> None:
         """Persist *data*.  Raises StorageError on failure."""
 
-    def cleanup(self) -> None:
+    def cleanup(self) -> None:  # noqa: B027 - optional hook, default no-op
         """Release resources (connections, threads, file handles).  Optional."""

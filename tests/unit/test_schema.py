@@ -1,7 +1,5 @@
 """Tests for schema validation."""
 
-import json
-
 import pytest
 
 from nacho.schema import SchemaValidator, ValidationError
@@ -78,10 +76,10 @@ class TestSchemaValidator:
         v = SchemaValidator(p)
         v.validate({"anything": True})
 
-    def test_unsupported_schema_extension_raises(self, tmp_path):
+    def test_non_object_schema_file_raises(self, tmp_path):
         p = tmp_path / "schema.xml"
         p.write_text("<schema/>")
-        with pytest.raises(ValueError, match="Unsupported schema file format"):
+        with pytest.raises(ValueError, match="did not parse to an object"):
             SchemaValidator(p)
 
     def test_nested_anyof_errors_include_context(self):

@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from .env import EnvOverrideHandler
+from .env import FALSY_STRINGS, TRUTHY_STRINGS, EnvOverrideHandler
 from .event import (
     Change,
     EventPipeline,
@@ -58,6 +58,11 @@ class Nacho:
         allow_empty_on_load_error: bool = False,
     ) -> None:
         self._lock = threading.RLock()
+        # Acquired before _lock is released on a write, so events are always
+        # dispatched in the order the state swaps happened (and saves persist
+        # in snapshot order) without holding the write lock during handlers.
+        self._emit_lock = threading.RLock()
+        self._save_lock = threading.RLock()
         self._read_only = read_only
         self._events_disabled = not events
         self._allow_empty_on_load_error = allow_empty_on_load_error
@@ -161,7 +166,7 @@ class Nacho:
     # Context manager
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "Nacho":
+    def __enter__(self) -> Nacho:
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -213,9 +218,10 @@ class Nacho:
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
-            if value.lower() in ("true", "yes", "1", "on"):
+            # "1"/"0" fall through to the int() coercion below.
+            if value.lower() in TRUTHY_STRINGS:
                 return True
-            if value.lower() in ("false", "no", "0", "off"):
+            if value.lower() in FALSY_STRINGS:
                 return False
         try:
             return bool(int(value))
@@ -255,6 +261,8 @@ class Nacho:
         Returns True when something actually changed.
         Validates against schema before applying when a schema is configured.
         Raises ValidationError if the resulting config would be invalid.
+        Raises ValueError when the path cannot be written (an intermediate
+        segment holds a scalar).
         Raises PermissionError when the instance is read-only.
         """
         self._check_writable()
@@ -264,10 +272,20 @@ class Nacho:
                 return False
             candidate = self._effective_from_stored(candidate_stored)
             self._validate(candidate)
-            old = copy.deepcopy(self._data)
+            old = self._data
+            if self._env is not None and candidate == old:
+                logger.warning(
+                    "set(%r): stored value updated, but the effective value is "
+                    "unchanged because an environment override masks it",
+                    key,
+                )
             self._stored_data = candidate_stored
             self._data = candidate
-        self._emit(detect_changes(old, self._data))
+            self._emit_lock.acquire()
+        try:
+            self._emit(old, candidate)
+        finally:
+            self._emit_lock.release()
         return True
 
     def delete(self, key: str) -> bool:
@@ -277,14 +295,18 @@ class Nacho:
             _MISSING = object()
             if get_nested_value(self._stored_data, key, _MISSING) is _MISSING:
                 return False
-            old = copy.deepcopy(self._data)
+            old = self._data
             candidate_stored = copy.deepcopy(self._stored_data)
             delete_nested_value(candidate_stored, key)
             candidate = self._effective_from_stored(candidate_stored)
             self._validate(candidate)
             self._stored_data = candidate_stored
             self._data = candidate
-        self._emit(detect_changes(old, self._data))
+            self._emit_lock.acquire()
+        try:
+            self._emit(old, candidate)
+        finally:
+            self._emit_lock.release()
         return True
 
     def update(self, data: Dict[str, Any]) -> bool:
@@ -301,10 +323,14 @@ class Nacho:
             if candidate_stored == self._stored_data and candidate == self._data:
                 return False
             self._validate(candidate)
-            old = copy.deepcopy(self._data)
+            old = self._data
             self._stored_data = candidate_stored
             self._data = candidate
-        self._emit(detect_changes(old, self._data))
+            self._emit_lock.acquire()
+        try:
+            self._emit(old, candidate)
+        finally:
+            self._emit_lock.release()
         return True
 
     def replace(
@@ -341,11 +367,15 @@ class Nacho:
                 and not schema_changed
             ):
                 return False
-            old = copy.deepcopy(self._data)
+            old = self._data
             self._validator = validator
             self._stored_data = candidate_stored
             self._data = candidate
-        self._emit(detect_changes(old, self._data))
+            self._emit_lock.acquire()
+        try:
+            self._emit(old, candidate)
+        finally:
+            self._emit_lock.release()
         return True
 
     # ------------------------------------------------------------------
@@ -367,7 +397,7 @@ class Nacho:
                 return copy.deepcopy(self._data)
 
         with self._lock:
-            old = copy.deepcopy(self._data)
+            old = self._data
             if not isinstance(raw, dict):
                 raise StorageError(f"Storage backend returned {type(raw).__name__}, expected dict")
             candidate_stored = copy.deepcopy(raw)
@@ -375,17 +405,17 @@ class Nacho:
             self._validate(candidate)
             self._stored_data = candidate_stored
             self._data = candidate
-
-        changes = detect_changes(old, self._data)
-        if not self._events_disabled:
-            snapshot = copy.deepcopy(self._data)
-            reload_change = Change(EventType.RELOAD, None, old, snapshot)
-            self._pipeline.dispatch([reload_change], snapshot)
-            if changes:
-                self._pipeline.dispatch(changes, snapshot)
-        return copy.deepcopy(self._data)
-
-    reload = load  # alias
+            self._emit_lock.acquire()
+        try:
+            if not self._events_disabled:
+                reload_change = Change(EventType.RELOAD, None, old, candidate)
+                self._pipeline.dispatch([reload_change], candidate)
+                changes = detect_changes(old, candidate)
+                if changes:
+                    self._pipeline.dispatch(changes, candidate)
+        finally:
+            self._emit_lock.release()
+        return copy.deepcopy(candidate)
 
     def save(self) -> None:
         """Persist current in-memory config to storage.
@@ -398,7 +428,11 @@ class Nacho:
             return
         with self._lock:
             data = copy.deepcopy(self._stored_data)
-        self._storage.save(data)
+            self._save_lock.acquire()
+        try:
+            self._storage.save(data)
+        finally:
+            self._save_lock.release()
         logger.debug("Config saved via %s", self._storage)
 
     # ------------------------------------------------------------------
@@ -421,7 +455,7 @@ class Nacho:
     # Transactions
     # ------------------------------------------------------------------
 
-    def transaction(self) -> "_TransactionContext":
+    def transaction(self) -> _TransactionContext:
         """Return a context manager for atomic multi-key updates.
 
         Example::
@@ -444,6 +478,7 @@ class Nacho:
         ``path_pattern="*"``             — fires for every per-path CHANGE (not aggregate).
         ``path_pattern="database.*"``    — fires for any key under ``database``.
         """
+        self._warn_if_events_disabled()
         return on_change(self._pipeline, path_pattern, priority)
 
     def on_event(
@@ -453,7 +488,15 @@ class Nacho:
         priority: int = 100,
     ) -> Callable:
         """Decorator: register a handler for specific *event_type*(s)."""
+        self._warn_if_events_disabled()
         return on_event(self._pipeline, event_type, path_pattern, priority)
+
+    def _warn_if_events_disabled(self) -> None:
+        if self._events_disabled:
+            logger.warning(
+                "Registering an event handler on a Nacho instance created with "
+                "events=False — the handler will never fire. Pass events=True to enable."
+            )
 
     # ------------------------------------------------------------------
     # Schema helpers
@@ -464,28 +507,6 @@ class Nacho:
         if self._validator is None:
             return []
         return self._validator.check(data)
-
-    # ------------------------------------------------------------------
-    # Backward-compat properties (used by server layer)
-    # ------------------------------------------------------------------
-
-    @property
-    def data(self) -> Dict[str, Any]:
-        """Return a defensive copy of the effective configuration.
-
-        ``data`` is kept as a read-only compatibility property. Mutating the
-        returned dict never changes the live configuration; use ``set()``,
-        ``update()``, ``replace()``, or ``delete()`` for writes.
-        """
-        return self.get_all()
-
-    @property
-    def event_pipeline(self) -> EventPipeline:
-        return self._pipeline
-
-    @property
-    def event_disabled(self) -> bool:
-        return self._events_disabled
 
     # ------------------------------------------------------------------
     # json helper
@@ -516,12 +537,20 @@ class Nacho:
         if validator is not None:
             validator.validate(data)  # raises ValidationError
 
-    def _emit(self, changes: List[Change]) -> None:
-        if self._events_disabled or not changes:
+    def _emit(self, old: Dict[str, Any], new: Dict[str, Any]) -> None:
+        """Diff *old* → *new* and dispatch events.
+
+        Both arguments are the snapshots swapped under the write lock, so events
+        always describe exactly the transition the writer performed. Callers
+        acquire _emit_lock before releasing the write lock, so concurrent
+        writers deliver their events in swap order. The diff is skipped
+        entirely when events are disabled (the default).
+        """
+        if self._events_disabled:
             return
-        with self._lock:
-            snapshot = copy.deepcopy(self._data)
-        self._pipeline.dispatch(changes, snapshot)
+        changes = detect_changes(old, new)
+        if changes:
+            self._pipeline.dispatch(changes, new)
 
 
 # ---------------------------------------------------------------------------

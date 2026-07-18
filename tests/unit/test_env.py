@@ -1,7 +1,5 @@
 """Tests for environment variable override support."""
 
-import os
-
 import pytest
 
 from nacho.env import EnvOverrideHandler
@@ -56,18 +54,15 @@ class TestEnvOverrideHandler:
         assert data["db"]["host"] == "new"
         assert data["other"] == "original"
 
-    def test_no_prefix_with_existing_key(self, monkeypatch):
-        # Without a prefix, common system vars are skipped
-        handler = EnvOverrideHandler(prefix="")
-        data = handler.apply({"PATH": "original"})
-        # PATH is in _SYSTEM_VARS so should be skipped
-        assert data["PATH"] == "original"
+    def test_empty_prefix_is_rejected(self):
+        with pytest.raises(ValueError, match="prefix"):
+            EnvOverrideHandler(prefix="")
 
-    def test_key_not_in_create_missing_false(self, monkeypatch):
-        monkeypatch.setenv("APP_NEW_KEY", "value")
-        handler = EnvOverrideHandler(prefix="APP", create_missing=False)
-        data = handler.apply({"existing": "x"})
-        assert "new" not in data
+    def test_numeric_strings_stay_numeric(self, monkeypatch):
+        monkeypatch.setenv("APP_PORT", "1")
+        handler = EnvOverrideHandler(prefix="APP")
+        data = handler.apply({"port": 8080})
+        assert data["port"] == 1 and not isinstance(data["port"], bool)
 
     def test_integration_with_nacho(self, monkeypatch):
         monkeypatch.setenv("NACHO_DATABASE_PORT", "9999")
@@ -78,3 +73,32 @@ class TestEnvOverrideHandler:
             env_prefix="NACHO",
         )
         assert c.get_int("database.port") == 9999
+
+
+class TestParsePredictability:
+    def test_version_like_string_stays_a_string(self, monkeypatch):
+        monkeypatch.setenv("APP_VERSION", "3.10")
+        handler = EnvOverrideHandler(prefix="APP")
+        assert handler.apply({"version": "old"})["version"] == "3.10"
+
+    def test_float_round_trip_is_parsed(self, monkeypatch):
+        monkeypatch.setenv("APP_RATIO", "3.14")
+        handler = EnvOverrideHandler(prefix="APP")
+        assert handler.apply({"ratio": 0.0})["ratio"] == 3.14
+
+    def test_quoted_value_forces_string(self, monkeypatch):
+        monkeypatch.setenv("APP_PORT", '"8080"')
+        handler = EnvOverrideHandler(prefix="APP")
+        assert handler.apply({"port": 1})["port"] == "8080"
+
+    def test_double_delimiter_nests_and_single_stays_in_key(self, monkeypatch):
+        monkeypatch.setenv("APP_DB__MAX_CONNECTIONS", "50")
+        handler = EnvOverrideHandler(prefix="APP")
+        data = handler.apply({"db": {"max_connections": 10}})
+        assert data["db"]["max_connections"] == 50
+
+    def test_conflicting_override_is_skipped_not_fatal(self, monkeypatch):
+        monkeypatch.setenv("APP_DB_HOST", "x")
+        handler = EnvOverrideHandler(prefix="APP")
+        data = handler.apply({"db": "just-a-string"})
+        assert data == {"db": "just-a-string"}

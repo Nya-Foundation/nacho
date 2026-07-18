@@ -266,22 +266,6 @@ class TestDecorators:
 
 
 class TestEventPipelineEdgeCases:
-    def test_emit_with_ignore_flag_dispatches_nothing(self):
-        assert EventPipeline().emit(EventType.UPDATE, ignore=True) == 0
-
-    def test_emit_invokes_matching_handlers(self):
-        pipeline = EventPipeline()
-        seen = []
-        pipeline.register(lambda **k: seen.append(k), EventType.UPDATE)
-        assert pipeline.emit(EventType.UPDATE, path="x", new_value=1) == 1
-        assert seen[0]["path"] == "x"
-
-    def test_register_handler_alias_accepts_event_list(self):
-        pipeline = EventPipeline()
-        handler = pipeline.register_handler(
-            lambda **k: None, [EventType.CREATE, EventType.UPDATE])
-        assert pipeline.unregister(handler) is True
-
     def test_unregister_unknown_handler_returns_false(self):
         from nacho.event import EventHandler
 
@@ -315,5 +299,8 @@ async def test_async_handler_dispatched_on_running_loop():
         seen.append(kwargs.get("new_value"))
 
     config.set("x", 2)
-    await asyncio.sleep(0.05)  # let the scheduled task run
+    for _ in range(500):  # bounded wait for the scheduled task, no fixed sleep
+        if 2 in seen:
+            break
+        await asyncio.sleep(0.01)
     assert 2 in seen

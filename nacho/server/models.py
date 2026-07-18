@@ -21,6 +21,13 @@ def validate_app_name(name: str) -> str:
     return name
 
 
+def normalize_format(value: str) -> str:
+    value = value.lower()
+    if value not in SUPPORTED_FORMATS:
+        raise ValueError(f"Format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
+    return value
+
+
 class ConfigRequest(BaseModel):
     """Full configuration payload."""
 
@@ -38,10 +45,7 @@ class ConfigRequest(BaseModel):
     @field_validator("format")
     @classmethod
     def validate_format(cls, value: str) -> str:
-        value = value.lower()
-        if value not in SUPPORTED_FORMATS:
-            raise ValueError(f"Format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
-        return value
+        return normalize_format(value)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -53,10 +57,12 @@ class ConfigRequest(BaseModel):
     )
 
 
-class AppCreateRequest(ConfigRequest):
-    """Create or replace an app."""
+class AppReplaceRequest(ConfigRequest):
+    """Replace an app's config, schema, and description.
 
-    name: str = Field(..., min_length=1, max_length=64)
+    Renaming is done via PATCH /api/apps/{name}/metadata, not here.
+    """
+
     description: Optional[str] = Field(default=None, max_length=256)
     schema_: Optional[Union[str, Dict[str, Any]]] = Field(
         default=None,
@@ -66,19 +72,21 @@ class AppCreateRequest(ConfigRequest):
     schema_format: str = Field(default="json", description="json, yaml, or toml")
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator("schema_format")
+    @classmethod
+    def validate_schema_format(cls, value: str) -> str:
+        return normalize_format(value)
+
+
+class AppCreateRequest(AppReplaceRequest):
+    """Create an app."""
+
+    name: str = Field(..., min_length=1, max_length=64)
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, value: str) -> str:
         return validate_app_name(value)
-
-    @field_validator("schema_format")
-    @classmethod
-    def validate_schema_format(cls, value: str) -> str:
-        value = value.lower()
-        if value not in SUPPORTED_FORMATS:
-            allowed = ", ".join(sorted(SUPPORTED_FORMATS))
-            raise ValueError(f"Schema format must be one of: {allowed}")
-        return value
 
 
 class ConvertRequest(BaseModel):
@@ -95,10 +103,7 @@ class ConvertRequest(BaseModel):
     @field_validator("from_", "to")
     @classmethod
     def validate_fmt(cls, value: str) -> str:
-        value = value.lower()
-        if value not in SUPPORTED_FORMATS:
-            raise ValueError(f"Format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
-        return value
+        return normalize_format(value)
 
 
 class SchemaUpdateRequest(BaseModel):
@@ -120,10 +125,7 @@ class SchemaUpdateRequest(BaseModel):
     @field_validator("schema_format")
     @classmethod
     def validate_schema_format(cls, value: str) -> str:
-        value = value.lower()
-        if value not in SUPPORTED_FORMATS:
-            raise ValueError(f"Schema format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
-        return value
+        return normalize_format(value)
 
 
 class AppMetadataRequest(BaseModel):
@@ -143,6 +145,17 @@ class AppMetadataRequest(BaseModel):
         if value is None:
             return value
         return validate_app_name(value)
+
+
+class RollbackRequest(BaseModel):
+    """Restore config and schema from a history snapshot (as a new revision)."""
+
+    revision: int = Field(..., ge=1, description="History revision to restore")
+    expected_revision: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Expected current app revision for optimistic concurrency",
+    )
 
 
 class PathUpdateRequest(BaseModel):

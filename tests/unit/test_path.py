@@ -63,9 +63,10 @@ class TestSetNestedValue:
         set_nested_value(data, "a.b.c", 42)
         assert data["a"]["b"]["c"] == 42
 
-    def test_create_nested_through_scalar_returns_false(self):
+    def test_create_nested_through_scalar_raises(self):
         data = {"a": "scalar"}
-        assert set_nested_value(data, "a.b", 42) is False
+        with pytest.raises(ValueError, match="not a container"):
+            set_nested_value(data, "a.b", 42)
         assert data == {"a": "scalar"}
 
     def test_create_list_path(self):
@@ -77,8 +78,14 @@ class TestSetNestedValue:
         data = {"x": 1}
         assert set_nested_value(data, "x", 1) is False
 
-    def test_empty_path_returns_false(self):
-        assert set_nested_value({}, "", "v") is False
+    def test_empty_path_raises(self):
+        with pytest.raises(ValueError, match="empty path"):
+            set_nested_value({}, "", "v")
+
+    def test_type_changing_write_with_equal_value_is_a_change(self):
+        data = {"debug": 1}
+        assert set_nested_value(data, "debug", True) is True
+        assert data["debug"] is True
 
 
 class TestDeleteNestedValue:
@@ -120,7 +127,7 @@ class TestDeepMerge:
     def test_does_not_mutate_inputs(self):
         src = {"a": 1}
         dst = {"b": 2}
-        result = deep_merge(src, dst)
+        assert deep_merge(src, dst) == {"a": 1, "b": 2}
         assert "a" not in dst
         assert "b" not in src
 
@@ -129,19 +136,24 @@ class TestDeepMerge:
 
 
 class TestPathEdgeCases:
-    def test_set_index_into_non_list_fails(self):
-        assert set_nested_value({"a": {}}, "a.0.x", 1) is False
+    def test_set_digit_segment_on_a_dict_uses_string_key(self):
+        data = {"a": {}}
+        assert set_nested_value(data, "a.0.x", 1) is True
+        assert data == {"a": {"0": {"x": 1}}}
+        assert get_nested_value(data, "a.0.x") == 1
 
-    def test_set_key_into_non_mapping_fails(self):
-        assert set_nested_value({"a": [1, 2]}, "a.b.c", 1) is False
+    def test_set_key_into_non_mapping_raises(self):
+        with pytest.raises(ValueError, match="numeric list index"):
+            set_nested_value({"a": [1, 2]}, "a.b.c", 1)
 
     def test_set_index_extends_list_with_padding(self):
         data = {"s": []}
         assert set_nested_value(data, "s[2]", "v") is True
         assert data["s"] == [None, None, "v"]
 
-    def test_set_string_key_on_a_list_fails(self):
-        assert set_nested_value({"s": []}, "s.key", "v") is False
+    def test_set_string_key_on_a_list_raises(self):
+        with pytest.raises(ValueError, match="numeric list index"):
+            set_nested_value({"s": []}, "s.key", "v")
 
     def test_delete_list_element_by_index(self):
         data = {"s": [1, 2, 3]}

@@ -1,16 +1,17 @@
 """Schema validation for Nacho.
 
-Optional dependency: install with `pip install nacho[schema]`.
+Optional dependency: install with `pip install nacho-python[schema]`.
 SchemaValidator raises ValidationError on invalid data so the caller never
 has to check a return value — invalid writes are refused immediately.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Union
+
+from .utils.io import load_file
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class SchemaValidator:
         if not HAS_SCHEMA_DEPS:
             raise ImportError(
                 "Schema validation requires 'jsonschema'. "
-                "Install with: pip install nacho[schema]"
+                "Install with: pip install nacho-python[schema]"
             )
         if isinstance(schema, (str, Path)):
             self._schema = self._load(Path(schema))
@@ -96,26 +97,11 @@ class SchemaValidator:
 
     @staticmethod
     def _load(path: Path) -> Dict[str, Any]:
+        # load_file returns {} for a missing file; a missing schema is a
+        # configuration mistake and must fail loudly instead.
         if not path.exists():
             raise FileNotFoundError(f"Schema file not found: {path}")
-
-        suffix = path.suffix.lower()
-        if suffix == ".json":
-            return json.loads(path.read_text(encoding="utf-8"))
-
-        if suffix in (".yaml", ".yml"):
-            try:
-                import yaml
-
-                return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            except ImportError:  # pragma: no cover - pyyaml is a core dependency
-                raise ImportError("YAML schema files require 'pyyaml'.")
-
-        if suffix == ".toml":
-            try:
-                import tomllib  # type: ignore
-            except ImportError:  # pragma: no cover - Python < 3.11 fallback
-                import tomli as tomllib  # type: ignore
-            return tomllib.loads(path.read_text(encoding="utf-8")) or {}
-
-        raise ValueError(f"Unsupported schema file format: {suffix!r}")
+        data = load_file(path)
+        if not isinstance(data, dict):
+            raise ValueError(f"Schema file {path} did not parse to an object")
+        return data

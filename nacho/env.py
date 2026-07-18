@@ -1,6 +1,8 @@
 """Environment variable override support.
 
 Maps NACHO_DATABASE_HOST → database.host (or a user-configured prefix/delimiter).
+A doubled delimiter nests while a single one stays part of the key, so
+NACHO_DB__MAX_CONNECTIONS → db.max_connections.
 """
 
 from __future__ import annotations
@@ -9,32 +11,51 @@ import ast
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from .utils.path import get_nested_value, set_nested_value
+from .utils.path import set_nested_value
 
 logger = logging.getLogger(__name__)
 
-# System variables to skip when operating prefix-free.
-_SYSTEM_VARS = frozenset({"_", "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "PWD"})
+# Shared truthy/falsy string sets (also used by Nacho.get_bool).
+TRUTHY_STRINGS = frozenset({"true", "yes", "on"})
+FALSY_STRINGS = frozenset({"false", "no", "off"})
 
 
 def _parse_value(raw: str) -> Any:
-    """Best-effort parse of an env var string to a Python type."""
+    """Best-effort parse of an env var string to a Python type.
+
+    Quoting a value ('8080' or "true") is the escape hatch that forces it
+    to stay a string.
+    """
     if not raw:
         return ""
     low = raw.lower()
-    if low in ("true", "yes", "1", "on"):
+    # "1"/"0" deliberately parse as integers below, not booleans.
+    if low in TRUTHY_STRINGS:
         return True
-    if low in ("false", "no", "0", "off"):
+    if low in FALSY_STRINGS:
         return False
     if low in ("null", "none", "~"):
         return None
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+        return raw[1:-1]
     try:
-        return ast.literal_eval(raw)
-    except (ValueError, SyntaxError):
+        return int(raw)
+    except ValueError:
         pass
-    if raw.startswith(("{", "[")):
+    # Floats only when the text round-trips, so "3.10" stays a version string.
+    try:
+        parsed = float(raw)
+        if str(parsed) == raw:
+            return parsed
+    except ValueError:
+        pass
+    if raw.startswith(("{", "[", "(")):
+        try:
+            return ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            pass
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -51,19 +72,17 @@ class EnvOverrideHandler:
         nested_delimiter: str = "_",
         include_paths: Optional[List[str]] = None,
         exclude_paths: Optional[List[str]] = None,
-        create_missing: bool = True,
     ) -> None:
         self.prefix = prefix.rstrip("_") if prefix else ""
+        if not self.prefix:
+            raise ValueError(
+                "EnvOverrideHandler requires a non-empty prefix — scanning the whole "
+                "environment would collide with system variables."
+            )
         self.delimiter = nested_delimiter
         self.include = list(include_paths or [])
         self.exclude = list(exclude_paths or [])
-        self.create_missing = create_missing
-        self._prefix_with_sep = f"{self.prefix}{self.delimiter}" if self.prefix else ""
-
-        if not self.prefix:
-            logger.warning(
-                "EnvOverrideHandler has no prefix — collisions with system variables are possible."
-            )
+        self._prefix_with_sep = f"{self.prefix}{self.delimiter}"
 
     def apply(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Return *data* with matching env vars overlaid (non-destructive copy)."""
@@ -77,10 +96,14 @@ class EnvOverrideHandler:
                 continue
             if not self._allowed(key):
                 continue
-            _MISSING = object()
-            if not self.create_missing and get_nested_value(result, key, _MISSING) is _MISSING:
+            try:
+                changed = set_nested_value(result, key, _parse_value(raw))
+            except ValueError as exc:
+                # An overlay conflict (e.g. the config holds a scalar where
+                # the env var implies nesting) must not crash the app.
+                logger.warning("Skipping env override %s: %s", name, exc)
                 continue
-            if set_nested_value(result, key, _parse_value(raw)):
+            if changed:
                 logger.debug("Env override: %s → %s = %r", name, key, raw)
                 applied += 1
         if applied:
@@ -93,19 +116,23 @@ class EnvOverrideHandler:
 
     def _to_key(self, name: str) -> Optional[str]:
         """Convert an env var name to a dot-notation config key, or None to skip."""
-        if self.prefix:
-            if not name.startswith(self._prefix_with_sep):
-                return None
-            tail = name[len(self._prefix_with_sep) :]
-        else:
-            if name in _SYSTEM_VARS or name.upper().startswith(("UV_", "PYTEST_", "PYTHON")):
-                return None
-            tail = name
+        if not name.startswith(self._prefix_with_sep):
+            return None
+        tail = name[len(self._prefix_with_sep) :]
 
         if not tail or tail.startswith(self.delimiter) or tail.endswith(self.delimiter):
             return None
-        if self.delimiter * 2 in tail:
-            return None
+
+        double = self.delimiter * 2
+        if double in tail:
+            # Doubled delimiter nests, single stays in the key:
+            # NACHO_DB__MAX_CONNECTIONS → db.max_connections
+            parts = tail.split(double)
+            if any(
+                not p or p.startswith(self.delimiter) or p.endswith(self.delimiter) for p in parts
+            ):
+                return None
+            return ".".join(parts).lower()
 
         return tail.replace(self.delimiter, ".").lower()
 

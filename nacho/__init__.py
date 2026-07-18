@@ -6,15 +6,15 @@ from .event import EventType
 from .schema import HAS_SCHEMA_DEPS, ValidationError
 from .storage import (
     HAS_REMOTE_DEPS,
+    AuthError,
+    ConflictError,
     FileStorageBackend,
+    NotFoundError,
+    RemoteError,
+    RemoteStorageBackend,
     StorageBackend,
     StorageError,
 )
-
-try:
-    from .storage import RemoteStorageBackend
-except ImportError:  # pragma: no cover - optional 'remote' extra not installed
-    pass
 
 try:
     from .server.app import NachoOrchestrator
@@ -30,6 +30,10 @@ __all__ = [
     "ValidationError",
     "StorageBackend",
     "StorageError",
+    "RemoteError",
+    "AuthError",
+    "NotFoundError",
+    "ConflictError",
     "FileStorageBackend",
     "RemoteStorageBackend",
     "NachoOrchestrator",
@@ -37,3 +41,6 @@ __all__ = [
     "HAS_REMOTE_DEPS",
     "HAS_SERVER_DEPS",
 ]
+if not HAS_SERVER_DEPS:
+    # Keep __all__ truthful so `from nacho import *` never hits an undefined name.
+    __all__.remove("NachoOrchestrator")

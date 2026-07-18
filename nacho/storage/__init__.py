@@ -1,8 +1,15 @@
-from .base import StorageBackend, StorageError
+from .base import (
+    AuthError,
+    ConflictError,
+    NotFoundError,
+    RemoteError,
+    StorageBackend,
+    StorageError,
+)
 from .file import FileStorageBackend
 
 try:
-    import requests
+    import requests  # noqa: F401
     import websocket  # noqa: F401
 
     HAS_REMOTE_DEPS = True
@@ -14,13 +21,17 @@ except ImportError:  # pragma: no cover - optional 'remote' extra not installed
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "RemoteStorageBackend requires extra dependencies. "
-                "Install with: pip install nacho[remote]"
+                "Install with: pip install nacho-python[remote]"
             )
 
 
 __all__ = [
     "StorageBackend",
     "StorageError",
+    "RemoteError",
+    "AuthError",
+    "NotFoundError",
+    "ConflictError",
     "FileStorageBackend",
     "RemoteStorageBackend",
     "HAS_REMOTE_DEPS",

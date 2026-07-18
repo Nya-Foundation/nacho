@@ -1,11 +1,9 @@
 """Nacho CLI package.
 
-This package provides the command-line interface for Nacho.
+Re-exports the console entry point (pyproject's script points at
+``nacho.cli.main:main_cli`` directly).
 """
 
-def main_cli(*args, **kwargs):
-    from .main import main_cli as _main_cli
-
-    return _main_cli(*args, **kwargs)
+from .main import main_cli
 
 __all__ = ["main_cli"]

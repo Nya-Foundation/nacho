@@ -4,7 +4,8 @@ Single file replacing six tightly-coupled modules.  The design follows three rul
   1. Detect changes as a pure function (no side effects).
   2. Dispatch events through a simple priority queue of handlers.
   3. Async handlers are supported: they are scheduled on the running loop when
-     called from an async context, or run on a shared background loop otherwise.
+     called from an async context, or run to completion on the calling thread
+     otherwise.
 """
 
 from __future__ import annotations
@@ -28,62 +29,18 @@ from .utils.path import (
 
 logger = logging.getLogger(__name__)
 
+# Strong references to in-flight handler tasks — the event loop only keeps
+# weak ones, so without this a task can be garbage-collected mid-flight.
+_background_tasks: Set[asyncio.Task] = set()
+
 
 def _log_task_result(task: asyncio.Task) -> None:
     try:
         task.result()
     except asyncio.CancelledError:
         pass
-    except Exception as exc:
-        logger.error("Async event handler raised: %s", exc)
-
-
-class _AsyncEventRunner:
-    """Runs async handlers for synchronous callers on one background loop."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
-        self._ready: Optional[threading.Event] = None
-
-    def run(self, coro: Any) -> None:
-        loop = self._ensure_loop()
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        future.result()
-
-    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
-        with self._lock:
-            if self._loop is not None and self._loop.is_running():
-                return self._loop
-
-            if self._ready is not None and self._thread is not None and self._thread.is_alive():
-                ready = self._ready
-            else:
-                ready = threading.Event()
-                self._ready = ready
-
-                def run_loop() -> None:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    with self._lock:
-                        self._loop = loop
-                    ready.set()
-                    loop.run_forever()
-
-                self._thread = threading.Thread(
-                    target=run_loop,
-                    name="nacho-events",
-                    daemon=True,
-                )
-                self._thread.start()
-
-        ready.wait()
-        with self._lock:
-            return self._loop  # type: ignore[return-value]
-
-
-_async_runner = _AsyncEventRunner()
+    except Exception:
+        logger.error("Async event handler raised", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -221,8 +178,11 @@ class EventHandler:
         self.event_types = event_types
         self.path_pattern = path_pattern
         self.priority = priority
-        self.is_async = inspect.iscoroutinefunction(callback) or (
-            hasattr(callback, "__call__") and inspect.iscoroutinefunction(callback.__call__)
+        # Detect async callable objects too (their __call__ is the coroutine
+        # function); getattr keeps plain functions from raising.
+        call_method = getattr(callback, "__call__", None)  # noqa: B004
+        self.is_async = inspect.iscoroutinefunction(callback) or inspect.iscoroutinefunction(
+            call_method
         )
 
     def matches(self, change: Change) -> bool:
@@ -244,13 +204,22 @@ class EventHandler:
                 try:
                     loop = asyncio.get_running_loop()
                     task = loop.create_task(coro)
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
                     task.add_done_callback(_log_task_result)
                 except RuntimeError:
-                    _async_runner.run(coro)
+                    # No loop in this thread: run the handler to completion here,
+                    # matching the blocking semantics sync handlers already have.
+                    asyncio.run(coro)
             else:
                 self.callback(**kwargs)
-        except Exception as exc:
-            logger.error("Handler %r raised: %s", self.callback.__name__, exc)
+        except Exception:
+            # getattr: functools.partial and callable objects have no __name__.
+            logger.error(
+                "Handler %r raised",
+                getattr(self.callback, "__name__", repr(self.callback)),
+                exc_info=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -283,21 +252,11 @@ class EventPipeline:
             self._handlers.sort(key=lambda h: h.priority)
         logger.debug(
             "Registered handler %r for %s%s",
-            callback.__name__,
+            getattr(callback, "__name__", repr(callback)),
             [e.value for e in event_types],
             f" on {path_pattern!r}" if path_pattern is not None else "",
         )
         return handler
-
-    # Kept for backward compat with server code that calls register_handler
-    def register_handler(
-        self,
-        callback: Callable,
-        event_types: Union[EventType, List[EventType]],
-        path_pattern: Optional[str] = None,
-        priority: int = 100,
-    ) -> EventHandler:
-        return self.register(callback, event_types, path_pattern, priority)
 
     def unregister(self, handler: EventHandler) -> bool:
         with self._lock:
@@ -315,28 +274,6 @@ class EventPipeline:
             for handler in handlers:
                 if handler.matches(change):
                     handler.invoke(change, config_data)
-
-    # Kept for backward compat with server code that calls pipeline.emit()
-    def emit(
-        self,
-        event_type: EventType,
-        path: Optional[str] = None,
-        old_value: Any = None,
-        new_value: Any = None,
-        config_data: Optional[Dict[str, Any]] = None,
-        ignore: bool = False,
-    ) -> int:
-        if ignore:
-            return 0
-        change = Change(event_type, path, old_value, new_value)
-        count = 0
-        with self._lock:
-            handlers = list(self._handlers)
-        for handler in handlers:
-            if handler.matches(change):
-                handler.invoke(change, config_data or {})
-                count += 1
-        return count
 
 
 # ---------------------------------------------------------------------------
@@ -371,39 +308,68 @@ def on_change(
 
 
 class Transaction:
-    """Accumulates mutations in a scratch copy; commits atomically."""
+    """Accumulates mutations in a scratch copy; commits atomically.
 
-    def __init__(self, config: "Any") -> None:
+    Reads inside the transaction see its own pending writes. At commit the
+    recorded operations are replayed onto the configuration's *current* state
+    under the write lock, so a write that landed while the transaction was
+    open is preserved instead of silently discarded (unless the transaction
+    itself called replace()).
+    """
+
+    def __init__(self, config: Any) -> None:
         self._config = config
         self._data: Dict[str, Any] = copy.deepcopy(config._stored_data)
+        self._ops: List[tuple] = []
 
     def get(self, key: Optional[str] = None, default: Any = None) -> Any:
         if key is None:
-            return self._data
-        return get_nested_value(self._data, key, default)
+            return copy.deepcopy(self._data)
+        return copy.deepcopy(get_nested_value(self._data, key, default))
 
     def set(self, key: str, value: Any) -> None:
+        value = copy.deepcopy(value)
         set_nested_value(self._data, key, value)
+        self._ops.append(("set", key, value))
 
     def delete(self, key: str) -> bool:
         ok, _ = delete_nested_value(self._data, key)
+        self._ops.append(("delete", key, None))
         return ok
 
     def update(self, data: Dict[str, Any]) -> None:
+        data = copy.deepcopy(data)
         self._data = deep_merge(data, self._data)
+        self._ops.append(("update", None, data))
 
     def replace(self, data: Dict[str, Any]) -> None:
-        self._data = copy.deepcopy(data)
+        data = copy.deepcopy(data)
+        self._data = data
+        self._ops.append(("replace", None, data))
 
     def commit(self) -> List[Change]:
-        with self._config._lock:
-            old = copy.deepcopy(self._config._data)
-            candidate_stored = copy.deepcopy(self._data)
-            candidate = self._config._effective_from_stored(candidate_stored)
-            self._config._validate(candidate)
+        config = self._config
+        with config._lock:
+            candidate_stored = copy.deepcopy(config._stored_data)
+            for op, key, value in self._ops:
+                if op == "set":
+                    set_nested_value(candidate_stored, key, copy.deepcopy(value))
+                elif op == "delete":
+                    delete_nested_value(candidate_stored, key)
+                elif op == "update":
+                    candidate_stored = deep_merge(value, candidate_stored)
+                else:  # replace
+                    candidate_stored = copy.deepcopy(value)
+            candidate = config._effective_from_stored(candidate_stored)
+            config._validate(candidate)
+            old = config._data
             changes = detect_changes(old, candidate)
-            self._config._stored_data = candidate_stored
-            self._config._data = candidate
-        if not self._config._events_disabled and changes:
-            self._config._pipeline.dispatch(changes, copy.deepcopy(self._config._data))
+            config._stored_data = candidate_stored
+            config._data = candidate
+            config._emit_lock.acquire()
+        try:
+            if not config._events_disabled and changes:
+                config._pipeline.dispatch(changes, copy.deepcopy(candidate))
+        finally:
+            config._emit_lock.release()
         return changes

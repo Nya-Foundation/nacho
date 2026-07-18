@@ -16,6 +16,7 @@ _DIR_MARKERS = {
     "integration": "integration",
     "e2e": "e2e",
     "docker": "docker",
+    "ui": "ui",
 }
 
 
@@ -53,31 +54,69 @@ def _wait_for_health(base_url, timeout=20.0):
     raise RuntimeError(f"server at {base_url} did not become healthy in {timeout}s")
 
 
-@pytest.fixture
-def live_server(tmp_path):
-    """Start a real Nacho server subprocess; yield its base URL.
+class ServerHandle:
+    """A running Nacho server subprocess plus enough state to restart it."""
 
-    Used by integration/e2e tests that need a server over the network rather
-    than an in-process TestClient.
-    """
-    port = _free_port()
-    data_dir = tmp_path / "server-state"
-    code = (
-        "from nacho.server import NachoOrchestrator;"
-        f"NachoOrchestrator(data_dir={str(data_dir)!r})"
-        f".run(host='127.0.0.1', port={port})"
-    )
-    proc = subprocess.Popen([sys.executable, "-c", code])
-    base_url = f"http://127.0.0.1:{port}"
-    try:
-        _wait_for_health(base_url)
-        yield base_url
-    finally:
-        proc.terminate()
+    def __init__(self, proc, url, port, data_dir, api_key):
+        self.proc = proc
+        self.url = url
+        self.port = port
+        self.data_dir = data_dir
+        self.api_key = api_key
+
+    def stop(self, timeout=5.0):
+        if self.proc.poll() is not None:
+            return
+        self.proc.terminate()
         try:
-            proc.wait(timeout=5)
+            self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            self.proc.kill()
+            self.proc.wait(timeout=timeout)
+
+
+@pytest.fixture
+def make_live_server(tmp_path):
+    """Factory starting real Nacho servers through the actual CLI entrypoint.
+
+    Returns a ``start(api_key=..., port=..., data_dir=...)`` callable yielding a
+    :class:`ServerHandle`. Reusing a port and data_dir simulates a restart.
+    """
+    handles = []
+
+    def start(*, api_key=None, port=None, data_dir=None, extra_args=()):
+        port = port or _free_port()
+        data_dir = data_dir or (tmp_path / "server-state")
+        cmd = [
+            sys.executable,
+            "-m",
+            "nacho.cli.main",
+            "server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--data-dir",
+            str(data_dir),
+        ]
+        if api_key:
+            cmd += ["--api-key", api_key]
+        cmd += list(extra_args)
+        proc = subprocess.Popen(cmd)
+        handle = ServerHandle(proc, f"http://127.0.0.1:{port}", port, data_dir, api_key)
+        handles.append(handle)
+        _wait_for_health(handle.url)
+        return handle
+
+    yield start
+    for handle in handles:
+        handle.stop()
+
+
+@pytest.fixture
+def live_server(make_live_server):
+    """Base URL of a real, unauthenticated Nacho server subprocess."""
+    return make_live_server().url
 
 
 @pytest.fixture

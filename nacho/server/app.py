@@ -9,9 +9,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from nacho._version import __version__
 from nacho.config import Nacho
@@ -23,9 +31,11 @@ from nacho.utils.path import get_nested_value
 from .models import (
     AppCreateRequest,
     AppMetadataRequest,
+    AppReplaceRequest,
     ConfigRequest,
     ConvertRequest,
     PathUpdateRequest,
+    RollbackRequest,
     SchemaUpdateRequest,
 )
 from .runtime import AppManager, ConfigApp, RevisionConflictError
@@ -33,6 +43,12 @@ from .runtime import AppManager, ConfigApp, RevisionConflictError
 LOGGER = logging.getLogger(__name__)
 
 _UI_INDEX = Path(__file__).parent / "ui" / "index.html"
+# Cap encoded string payloads: parsing is CPU-bound (YAML anchors expand),
+# and no legitimate config approaches this size.
+_MAX_PAYLOAD_BYTES = 1024 * 1024
+# Cap whole request bodies (a raw JSON object bypasses the string cap above).
+# Checked via Content-Length, which every real JSON client sends.
+_MAX_BODY_BYTES = 2 * 1024 * 1024
 
 
 class InvalidConfigDataError(ValueError):
@@ -50,14 +66,23 @@ class NachoOrchestrator:
         cors_origins: Optional[List[str]] = None,
         data_dir: Optional[Union[str, Path]] = None,
         logger: Optional[logging.Logger] = None,
+        history_limit: int = 50,
+        read_only_api_key: Optional[str] = None,
     ) -> None:
         self.read_only = read_only
-        self.cors_origins = list(cors_origins) if cors_origins is not None else ["*"]
+        # No CORS by default: the bundled UI is same-origin and SDK/CLI
+        # clients are not browsers, so cross-origin access is opt-in.
+        self.cors_origins = list(cors_origins) if cors_origins is not None else []
         self.logger = logger or LOGGER
-        self.auth = AuthGuard(api_key=api_key) if api_key else None
+        self.auth = (
+            AuthGuard(api_key=api_key, read_only_api_key=read_only_api_key)
+            if (api_key or read_only_api_key)
+            else None
+        )
         self.manager = AppManager(
             data_dir=Path(data_dir) if data_dir else None,
             logger=self.logger,
+            history_limit=history_limit,
         )
 
         self.manager.load_persisted()
@@ -94,19 +119,32 @@ class NachoOrchestrator:
         )
 
     def _setup_middleware(self) -> None:
-        self.app.add_middleware(
-            CORSMiddleware,
-            allow_origins=self.cors_origins,
-            allow_credentials=self._allow_cors_credentials(),
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        @self.app.middleware("http")
+        async def cap_body_size(request: Request, call_next):
+            length = request.headers.get("content-length")
+            if length and length.isdigit() and int(length) > _MAX_BODY_BYTES:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={
+                        "detail": f"Request body exceeds {_MAX_BODY_BYTES // (1024 * 1024)} MiB"
+                    },
+                )
+            return await call_next(request)
+
+        if self.cors_origins:
+            self.app.add_middleware(
+                CORSMiddleware,
+                allow_origins=self.cors_origins,
+                allow_credentials=self._allow_cors_credentials(),
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
         if self.auth:
             self.app.add_middleware(AuthMiddleware, auth=self.auth, logger=self.logger)
 
     def _setup_routes(self) -> None:
         @self.app.get("/")
-        async def root() -> Dict[str, Any]:
+        def root() -> Dict[str, Any]:
             return {
                 "name": "nacho",
                 "version": __version__,
@@ -115,7 +153,7 @@ class NachoOrchestrator:
             }
 
         @self.app.get("/health")
-        async def health() -> Dict[str, Any]:
+        def health() -> Dict[str, Any]:
             return {
                 "status": "ok",
                 "version": __version__,
@@ -125,7 +163,7 @@ class NachoOrchestrator:
             }
 
         @self.app.get("/ui", include_in_schema=False)
-        async def ui() -> FileResponse:
+        def ui() -> FileResponse:
             if not _UI_INDEX.is_file():
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -134,21 +172,23 @@ class NachoOrchestrator:
             return FileResponse(_UI_INDEX, media_type="text/html")
 
         @self.app.get("/api/apps")
-        async def list_apps() -> Dict[str, Dict[str, Dict[str, Any]]]:
+        def list_apps() -> Dict[str, Dict[str, Dict[str, Any]]]:
             return {"data": self.manager.list_info()}
 
         @self.app.post("/api/convert")
-        async def convert_payload(request: ConvertRequest) -> Dict[str, Any]:
+        def convert_payload(request: ConvertRequest) -> Dict[str, Any]:
             """Convert a config/schema payload between json, yaml, and toml."""
             try:
                 obj = self._parse_config(request.data, request.from_)
                 text = dump_string(obj, request.to)
-            except (InvalidConfigDataError, ValueError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"format": request.to, "data": text}
 
         @self.app.post("/api/apps", status_code=status.HTTP_201_CREATED)
-        async def create_app(request: AppCreateRequest) -> Dict[str, Any]:
+        def create_app(request: AppCreateRequest) -> Dict[str, Any]:
             self._check_writable()
             try:
                 config_data = self._parse_config(request.data, request.format)
@@ -159,19 +199,20 @@ class NachoOrchestrator:
                     description=request.description,
                     schema=schema,
                 )
-            except (InvalidConfigDataError, ValueError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            except (ValueError, ValidationError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": "App created", "app": app.info}
 
         @self.app.get("/api/apps/{app_name}")
-        async def get_app(app_name: str) -> Dict[str, Dict[str, Any]]:
+        def get_app(app_name: str) -> Dict[str, Dict[str, Any]]:
             return {"data": self._get_app(app_name).info}
 
         @self.app.put("/api/apps/{app_name}")
-        async def replace_app(
+        def replace_app(
             app_name: str,
-            request: AppCreateRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
+            request: AppReplaceRequest,
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -179,25 +220,25 @@ class NachoOrchestrator:
                 schema = self._parse_schema(request.schema_, request.schema_format)
                 app = self.manager.replace(
                     app_name,
-                    new_name=request.name,
                     config_data=config_data,
                     description=request.description,
                     schema=schema,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
-            except (InvalidConfigDataError, ValueError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise self._conflict(exc) from exc
+            except (ValueError, ValidationError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": "App replaced", "app": app.info}
 
         @self.app.patch("/api/apps/{app_name}/metadata")
-        async def update_metadata(
+        def update_metadata(
             app_name: str,
             request: AppMetadataRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -205,34 +246,38 @@ class NachoOrchestrator:
                     app_name,
                     new_name=request.name,
                     description=request.description,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except ValueError as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": "App metadata updated", "app": app.info}
 
         @self.app.delete("/api/apps/{app_name}")
-        async def delete_app(app_name: str) -> Dict[str, str]:
+        def delete_app(app_name: str) -> Dict[str, str]:
             self._check_writable()
             if not self.manager.delete(app_name):
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             return {"message": f"App {app_name!r} deleted"}
 
         @self.app.get("/api/apps/{app_name}/config")
-        async def get_config(app_name: str, response: Response) -> Dict[str, Any]:
+        def get_config(app_name: str, request: Request, response: Response) -> Any:
             app = self._get_app(app_name)
+            not_modified = self._not_modified(request, app)
+            if not_modified is not None:
+                return not_modified
             self._set_revision_headers(response, app)
             return app.config.get_all()
 
         @self.app.put("/api/apps/{app_name}/config")
-        async def replace_config(
+        def replace_config(
             app_name: str,
             request: ConfigRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -240,14 +285,16 @@ class NachoOrchestrator:
                 app = self.manager.replace_config(
                     app_name,
                     config_data,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
-            except (InvalidConfigDataError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise self._conflict(exc) from exc
+            except (ValueError, ValidationError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {
                 "message": "Configuration replaced",
                 "revision": app.revision,
@@ -255,15 +302,14 @@ class NachoOrchestrator:
             }
 
         @self.app.get("/api/apps/{app_name}/schema")
-        async def get_schema(app_name: str) -> Dict[str, Any]:
+        def get_schema(app_name: str) -> Dict[str, Any]:
             app = self._get_app(app_name)
-            return {"data": {"schema": app.schema}}
+            return {"data": app.schema}
 
         @self.app.put("/api/apps/{app_name}/schema")
-        async def replace_schema(
+        def replace_schema(
             app_name: str,
             request: SchemaUpdateRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
@@ -271,19 +317,25 @@ class NachoOrchestrator:
                 app = self.manager.update_schema(
                     app_name,
                     schema,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
-            except (InvalidConfigDataError, ValueError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise self._conflict(exc) from exc
+            except (ValueError, ValidationError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": "Schema updated", "revision": app.revision, "schema": app.schema}
 
         @self.app.get("/api/apps/{app_name}/config/{path:path}")
-        async def get_path(app_name: str, path: str) -> Dict[str, Any]:
+        def get_path(app_name: str, path: str, request: Request, response: Response) -> Any:
             app = self._get_app(app_name)
+            not_modified = self._not_modified(request, app)
+            if not_modified is not None:
+                return not_modified
+            self._set_revision_headers(response, app)
             # Resolve against the snapshot directly: Nacho.get() deep-copies its
             # result, so an identity-sentinel passed to it would never compare
             # equal — get_nested_value preserves the sentinel by identity.
@@ -297,49 +349,53 @@ class NachoOrchestrator:
             return {"path": path, "value": value}
 
         @self.app.put("/api/apps/{app_name}/config/{path:path}")
-        async def set_path(
+        def set_path(
             app_name: str,
             path: str,
             request: PathUpdateRequest,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
                 value = self._convert_value(request.value, request.type)
-                app = self.manager.get(app_name)
-                self.manager.set_config_path(
+                changed = self.manager.set_config_path(
                     app_name,
                     path,
                     value,
-                    expected_revision=self._expected_revision(request.revision, if_match),
+                    expected_revision=request.revision,
                 )
-                app = self._get_app(app_name) if app is None else app
+                app = self._get_app(app_name)
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
-            except (ValueError, TypeError, json.JSONDecodeError, ValidationError) as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise self._conflict(exc) from exc
+            except (ValueError, TypeError, ValidationError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {
-                "message": "Configuration path updated",
+                "message": (
+                    "Configuration path updated"
+                    if changed
+                    else "Configuration path unchanged (value already set)"
+                ),
                 "path": path,
                 "value": value,
+                "changed": changed,
                 "revision": app.revision,
             }
 
         @self.app.delete("/api/apps/{app_name}/config/{path:path}")
-        async def delete_path(
+        def delete_path(
             app_name: str,
             path: str,
             revision: Optional[int] = None,
-            if_match: Optional[str] = Header(default=None, alias="If-Match"),
         ) -> Dict[str, Any]:
             self._check_writable()
             try:
                 deleted = self.manager.delete_config_path(
                     app_name,
                     path,
-                    expected_revision=self._expected_revision(revision, if_match),
+                    expected_revision=revision,
                 )
                 if not deleted:
                     raise HTTPException(
@@ -348,20 +404,69 @@ class NachoOrchestrator:
                     )
                 app = self._get_app(app_name)
             except KeyError:
-                raise self._not_found(app_name)
+                raise self._not_found(app_name) from None
             except RevisionConflictError as exc:
-                raise self._conflict(exc)
+                raise self._conflict(exc) from exc
             except ValidationError as exc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
             return {"message": f"Configuration path {path!r} deleted", "revision": app.revision}
 
+        @self.app.get("/api/apps/{app_name}/history")
+        def list_history(app_name: str) -> Dict[str, Any]:
+            try:
+                return {"data": self.manager.list_history(app_name)}
+            except KeyError:
+                raise self._not_found(app_name) from None
+
+        @self.app.get("/api/apps/{app_name}/history/{revision}")
+        def get_history_snapshot(app_name: str, revision: int) -> Dict[str, Any]:
+            try:
+                snapshot = self.manager.get_history_snapshot(app_name, revision)
+            except KeyError:
+                raise self._not_found(app_name) from None
+            if snapshot is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Revision {revision} of app {app_name!r} is not in history",
+                )
+            return {"data": snapshot}
+
+        @self.app.post("/api/apps/{app_name}/rollback")
+        def rollback(app_name: str, request: RollbackRequest) -> Dict[str, Any]:
+            self._check_writable()
+            try:
+                app = self.manager.rollback(
+                    app_name,
+                    request.revision,
+                    expected_revision=request.expected_revision,
+                )
+            except KeyError:
+                raise self._not_found(app_name) from None
+            except LookupError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except RevisionConflictError as exc:
+                raise self._conflict(exc) from exc
+            except ValidationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
+            return {
+                "message": f"Rolled back to revision {request.revision}",
+                "revision": app.revision,
+                "data": app.config.get_all(),
+            }
+
         @self.app.post("/api/apps/{app_name}/validate")
-        async def validate_config(app_name: str, request: ConfigRequest) -> Dict[str, Any]:
+        def validate_config(app_name: str, request: ConfigRequest) -> Dict[str, Any]:
             app = self._get_app(app_name)
             try:
                 config_data = self._parse_config(request.data, request.format)
             except InvalidConfigDataError as exc:
-                return {"valid": False, "errors": [str(exc)], "data": app.config.get_all()}
+                # "data" is always the submitted payload (parsed), never the
+                # app's current config; None signals it could not be parsed.
+                return {"valid": False, "errors": [str(exc)], "data": None}
             errors = app.config.check(config_data)
             return {"valid": not errors, "errors": errors, "data": config_data}
 
@@ -386,7 +491,11 @@ class NachoOrchestrator:
                     }
                 )
                 while True:
-                    await websocket.receive_text()
+                    # receive() (not receive_text) so a binary frame is
+                    # ignored instead of killing the connection.
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        break
             except WebSocketDisconnect:
                 pass
             finally:
@@ -395,6 +504,10 @@ class NachoOrchestrator:
     def _parse_config(self, data: Any, fmt: str) -> Dict[str, Any]:
         if isinstance(data, dict):
             return data
+        if isinstance(data, str) and len(data) > _MAX_PAYLOAD_BYTES:
+            raise InvalidConfigDataError(
+                f"Encoded payload exceeds {_MAX_PAYLOAD_BYTES // (1024 * 1024)} MiB"
+            )
         try:
             parsed = load_string(data, fmt)
         except Exception as exc:
@@ -461,51 +574,27 @@ class NachoOrchestrator:
             },
         )
 
-    def _expected_revision(
-        self,
-        body_revision: Optional[int],
-        if_match: Optional[str],
-    ) -> Optional[int]:
-        header_revision = self._parse_if_match(if_match)
-        if (
-            body_revision is not None
-            and header_revision is not None
-            and body_revision != header_revision
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="revision and If-Match refer to different revisions",
-            )
-        return body_revision if body_revision is not None else header_revision
-
-    def _parse_if_match(self, value: Optional[str]) -> Optional[int]:
-        if value is None:
-            return None
-        value = value.strip()
-        if value == "*":
-            return None
-        if value.startswith("W/"):
-            value = value[2:].strip()
-        if len(value) >= 2 and value[0] == value[-1] == '"':
-            value = value[1:-1]
-        try:
-            revision = int(value)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="If-Match must be an integer revision",
-            ) from exc
-        if revision < 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="If-Match revision must be positive",
-            )
-        return revision
-
     def _set_revision_headers(self, response: Response, app: ConfigApp) -> None:
         revision = str(app.revision)
         response.headers["ETag"] = f'"{revision}"'
         response.headers["X-Nacho-Revision"] = revision
+
+    def _not_modified(self, request: Request, app: ConfigApp) -> Optional[Response]:
+        """304 response when If-None-Match already names the current revision.
+
+        Lets pollers re-check cheaply: the config body is only sent when the
+        revision actually moved.
+        """
+        header = request.headers.get("if-none-match")
+        if not header:
+            return None
+        tags = {tag.strip() for tag in header.split(",")}
+        tags |= {tag[2:] for tag in tags if tag.startswith("W/")}
+        if "*" not in tags and f'"{app.revision}"' not in tags:
+            return None
+        response = Response(status_code=status.HTTP_304_NOT_MODIFIED)
+        self._set_revision_headers(response, app)
+        return response
 
     def _check_writable(self) -> None:
         if self.read_only:
@@ -515,7 +604,9 @@ class NachoOrchestrator:
             )
 
     def run(  # pragma: no cover - thin uvicorn wrapper, exercised via the CLI
-        self, host: str = "0.0.0.0", port: int = 8000, reload: bool = False
+        self, host: str = "127.0.0.1", port: int = 8000, reload: bool = False
     ) -> None:
+        """Serve the API. Binds to loopback by default; pass host="0.0.0.0"
+        explicitly (ideally with an api_key) to accept remote connections."""
         config = uvicorn.Config(app=self.app, host=host, port=port, reload=reload)
         uvicorn.Server(config).run()

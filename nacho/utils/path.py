@@ -37,7 +37,12 @@ def get_nested_value(data: Dict[str, Any], path: str, default: Any = None) -> An
     try:
         current = data
         for key in parse_path(path):
-            current = current[int(key)] if key.isdigit() else current[key]
+            # Digit segments index sequences; dict keys are always looked up
+            # as strings so JSON configs with numeric keys stay reachable.
+            if isinstance(current, (list, tuple)) and key.isdigit():
+                current = current[int(key)]
+            else:
+                current = current[key]
         return current
     except (KeyError, IndexError, TypeError):
         return default
@@ -46,52 +51,64 @@ def get_nested_value(data: Dict[str, Any], path: str, default: Any = None) -> An
 def set_nested_value(data: Dict[str, Any], path: str, value: Any) -> bool:
     """Set a value by dot-notation path, creating intermediate dicts as needed.
 
-    Returns True when the value changed, False when it was already equal.
+    Returns True when the value changed, False when the stored value was
+    already identical (same value and same type — so replacing the int ``1``
+    with ``True`` counts as a change).
+    Raises ValueError when the path cannot be written because an
+    intermediate segment is not a container.
     """
     if not path:
-        return False
+        raise ValueError("Cannot set an empty path")
 
     _MISSING = object()
-    if get_nested_value(data, path, _MISSING) == value:
+    existing = get_nested_value(data, path, _MISSING)
+    if existing is not _MISSING and type(existing) is type(value) and existing == value:
         return False
 
     keys = parse_path(path)
-    if not keys:
-        return False
-
     current: Any = data
     for index, key in enumerate(keys[:-1]):
         next_key = keys[index + 1]
-        if key.isdigit():
+        if isinstance(current, list):
+            if not key.isdigit():
+                raise ValueError(
+                    f"Cannot set {path!r}: segment {key!r} must be a numeric list index"
+                )
             idx = int(key)
-            if not isinstance(current, list):
-                return False
             while len(current) <= idx:
                 current.append([] if next_key.isdigit() else {})
             current = current[idx]
-        else:
-            if not isinstance(current, MutableMapping):
-                return False
+        elif isinstance(current, MutableMapping):
             if key not in current:
                 current[key] = [] if next_key.isdigit() else {}
             elif not isinstance(current[key], (dict, list)):
-                return False
+                raise ValueError(
+                    f"Cannot set {path!r}: segment {key!r} holds a "
+                    f"{type(current[key]).__name__}, not a container"
+                )
             current = current[key]
+        else:
+            raise ValueError(
+                f"Cannot set {path!r}: segment {key!r} is inside a "
+                f"{type(current).__name__}, not a container"
+            )
 
     final = keys[-1]
-    try:
-        if final.isdigit() and isinstance(current, list):
-            idx = int(final)
-            while len(current) <= idx:
-                current.append(None)
-            current[idx] = value
-        elif isinstance(current, MutableMapping):
-            current[final] = value
-        else:
-            return False
-        return True
-    except (KeyError, IndexError, TypeError):
-        return False
+    if isinstance(current, list):
+        if not final.isdigit():
+            raise ValueError(f"Cannot set {path!r}: segment {final!r} must be a numeric list index")
+        idx = int(final)
+        while len(current) <= idx:
+            current.append(None)
+        current[idx] = value
+    elif isinstance(current, MutableMapping):
+        current[final] = value
+    else:
+        raise ValueError(
+            f"Cannot set {path!r}: segment {final!r} is inside a "
+            f"{type(current).__name__}, not a container"
+        )
+    return True
 
 
 def delete_nested_value(data: Dict[str, Any], path: str) -> Tuple[bool, Any]:
@@ -111,17 +128,19 @@ def delete_nested_value(data: Dict[str, Any], path: str) -> Tuple[bool, Any]:
     current = data
     try:
         for key in keys[:-1]:
-            current = current[int(key)] if key.isdigit() else current[key]
+            if isinstance(current, (list, tuple)) and key.isdigit():
+                current = current[int(key)]
+            else:
+                current = current[key]
     except (KeyError, IndexError, TypeError):
         return False, None
 
     final = keys[-1]
     try:
-        if final.isdigit():
-            idx = int(final)
-            if not isinstance(current, list):
+        if isinstance(current, list):
+            if not final.isdigit():
                 return False, None
-            del current[idx]
+            del current[int(final)]
         else:
             del current[final]
         return True, old_value

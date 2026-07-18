@@ -17,9 +17,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 IMAGE_TAG = "nacho:pytest-docker"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("docker") is None, reason="docker CLI not available"
-)
+pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="docker CLI not available")
 
 
 def _free_port():
@@ -43,14 +41,19 @@ def docker_server():
     """Build the image, run a container, yield its base URL."""
     build = subprocess.run(
         ["docker", "build", "-t", IMAGE_TAG, "."],
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     assert build.returncode == 0, f"docker build failed:\n{build.stderr}"
 
     port = _free_port()
     run = subprocess.run(
         ["docker", "run", "-d", "--rm", "-p", f"{port}:8000", IMAGE_TAG],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert run.returncode == 0, f"docker run failed:\n{run.stderr}"
     container_id = run.stdout.strip()
@@ -65,9 +68,7 @@ def docker_server():
             except Exception:
                 time.sleep(0.3)
         else:
-            logs = subprocess.run(
-                ["docker", "logs", container_id], capture_output=True, text=True
-            )
+            logs = subprocess.run(["docker", "logs", container_id], capture_output=True, text=True)
             pytest.fail(f"container never became healthy:\n{logs.stdout}\n{logs.stderr}")
         yield base_url
     finally:
@@ -90,7 +91,8 @@ def test_container_serves_ui(docker_server):
 def test_container_app_and_config_lifecycle(docker_server):
     """Core remote functionality works end-to-end against the container."""
     status, _ = _http_json(
-        "POST", docker_server + "/api/apps",
+        "POST",
+        docker_server + "/api/apps",
         {"name": "orders", "data": {"region": "eu"}},
     )
     assert status == 201
@@ -99,9 +101,7 @@ def test_container_app_and_config_lifecycle(docker_server):
     assert status == 200 and body["region"] == "eu"
 
     # Update a single path and read it back.
-    status, _ = _http_json(
-        "PUT", docker_server + "/api/apps/orders/config/region", {"value": "us"}
-    )
+    status, _ = _http_json("PUT", docker_server + "/api/apps/orders/config/region", {"value": "us"})
     assert status == 200
     status, body = _http_json("GET", docker_server + "/api/apps/orders/config")
     assert body["region"] == "us"

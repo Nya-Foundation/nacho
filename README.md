@@ -10,7 +10,7 @@
 |_| \_|/_/   \_\ \____||_| |_| \___/
 </pre>
 
-  <h3>Lightweight, self-hosted dynamic configuration service for Python.</h3>
+  <h3>Lightweight, self-hosted dynamic configuration service for Python</h3>
 
   <p>
     <a href="README.md">English</a> |
@@ -29,84 +29,60 @@
 
   <div>
     <a href="https://codecov.io/gh/nya-foundation/nacho"><img src="https://codecov.io/gh/nya-foundation/nacho/branch/main/graph/badge.svg" alt="Code Coverage"/></a>
-    <a href="https://github.com/nya-foundation/nacho/actions/workflows/scan.yml"><img src="https://github.com/nya-foundation/nacho/actions/workflows/scan.yml/badge.svg" alt="CodeQL & Dependencies Scan"/></a>
+    <a href="https://github.com/nya-foundation/nacho/actions/workflows/scan.yml"><img src="https://github.com/nya-foundation/nacho/actions/workflows/scan.yml/badge.svg" alt="CodeQL and Dependencies Scan"/></a>
     <a href="https://github.com/nya-foundation/nacho/actions/workflows/publish.yml"><img src="https://github.com/nya-foundation/nacho/actions/workflows/publish.yml/badge.svg" alt="CI/CD Builds"/></a>
   </div>
 </div>
 
-> **Note:** This project is under active development. If you encounter unexpected behavior, please open an issue on GitHub.
+## Overview
 
-## What is Nacho?
+Nacho is a self-hosted configuration service for Python. Run one Nacho server,
+point your services at it with a few lines of code, and push configuration
+changes that reach them live — no redeploy, no restart, no polling.
 
-Nacho is a lightweight, self-hosted configuration **service** for Python.
+Every write is validated against a JSON Schema before it is stored, every
+revision is kept in a rollback history, and a built-in single-file web UI
+manages all of it. When you do not need a server, the same library works
+standalone against a local file or an in-memory dict.
 
-Run a Nacho server, point your services at it with a few lines of code, and push
-configuration changes that reach them **live** — no redeploy, no restart. Every
-change is validated against a JSON Schema before it is stored, and a built-in
-web UI lets you manage it all. When you don't need a server, the same library
-also works standalone against a local file.
-
-| Feature | Description |
+| Capability | Description |
 |---|---|
-| **Centralized config server** | Run one Nacho server and manage every service's configuration from a REST API, CLI, or web UI. |
-| **Live updates** | Clients subscribe over WebSocket and see changes the moment they happen — no polling, no restart. |
-| **Schema-first validation** | Every write is checked against a JSON Schema; invalid data is rejected before it reaches storage. |
-| **Drop-in Python client** | `RemoteStorageBackend` gives a remote app the same API as a local file — swap the storage, change nothing else. |
-| **Built-in management UI** | Create apps and edit configuration or schema — in JSON, YAML, or TOML — from a single-file web UI the server hosts itself. |
-| **Multi-format** | JSON, YAML, and TOML everywhere: API payloads, stored files, and the UI editor. |
-| **Standalone mode** | No server required — point Nacho at a local file or an in-memory dict and use it as a plain config library. |
-
-## Prerequisites
-
-- Python 3.9 or higher
-- Docker (optional, for containerized deployment)
+| Centralized configuration | One server manages every service's configuration through a REST API, a CLI, and a web UI. |
+| Live updates | Clients subscribe over WebSocket and receive changes the moment they happen. |
+| Schema-first validation | Writes are checked against a JSON Schema and rejected before they reach storage. |
+| History and rollback | Every revision is snapshotted; any revision can be inspected and restored. |
+| Drop-in Python client | `RemoteStorageBackend` gives a remote application the same API as a local file. |
+| Optimistic concurrency | Revision-checked writes turn lost updates into explicit `409 Conflict` responses. |
+| Multi-format | JSON, YAML, and TOML are interchangeable across API payloads, stored files, and the UI editor. |
+| Standalone mode | Use Nacho as a plain configuration library with no server at all. |
 
 ## Installation
 
-Nacho uses optional extras to keep the core dependency footprint small.
+Nacho keeps its core dependency footprint small through optional extras:
 
 ```bash
-# Run a configuration server
-pip install nacho-python[server]
-
-# Connect a service to a server (remote client)
-pip install nacho-python[remote]
-
-# Core — standalone local file management only
-pip install nacho-python
-
-# With JSON Schema validation
-pip install nacho-python[schema]
-
-# Everything
-pip install nacho-python[all]
-
-# Development and testing
-pip install nacho-python[dev]
+pip install nacho-python[server]    # run a configuration server
+pip install nacho-python[remote]    # connect a service to a server
+pip install nacho-python[schema]    # JSON Schema validation for standalone use
+pip install nacho-python            # core: standalone local file management
 ```
 
-| Extra | Dependencies | Purpose |
-|---|---|---|
-| `server` | fastapi, uvicorn, websockets | REST API and WebSocket configuration server |
-| `remote` | requests, websocket-client | Remote configuration client |
-| `schema` | jsonschema, rfc3987 | JSON Schema validation on writes |
-| *(none)* | pyyaml, tomli-w | Standalone local file read/write (YAML, JSON, TOML) |
-| `all` | All of the above | Complete installation |
-| `dev` | pytest, httpx, coverage | Development and testing |
+Requires Python 3.9 or later. Docker images are available for containerized
+deployments (see [Docker](#docker)).
 
-## Quick Start
+## Quick start
 
-**1. Run a Nacho server**
+Start a server:
 
 ```bash
 pip install nacho-python[server]
 nacho server --config config.yaml --api-key "secure-key"
 ```
 
-The server is now live at `http://localhost:8000` — REST API, WebSocket push,
-and a built-in management UI at `/ui`.
+The server is now live at `http://127.0.0.1:8000` with a REST API, WebSocket
+push, interactive API docs at `/docs`, and a management UI at `/ui`.
 
-**2. Point your service at it**
+Connect a service:
 
 ```bash
 pip install nacho-python[remote]
@@ -117,10 +93,10 @@ from nacho import Nacho, RemoteStorageBackend
 
 config = Nacho(
     storage=RemoteStorageBackend(
-        url="http://localhost:8000",
+        url="http://127.0.0.1:8000",
         app_name="my-service",
         api_key="secure-key",
-        watch=True,           # receive live updates over WebSocket
+        watch=True,            # receive live updates over WebSocket
     ),
     events=True,
 )
@@ -134,60 +110,57 @@ def on_flag_change(path, new_value, **kwargs):
     print(f"{path} is now {new_value}")
 ```
 
-Change a value from the UI, the CLI, or the API — every connected client sees it
-immediately.
+Change a value from the UI, the CLI, or the API, and every connected client
+sees it immediately.
 
-> **No server needed?** Nacho also works as a standalone file-backed library:
-> `config = Nacho("config.yaml")`. See [Standalone file-backed usage](#standalone-file-backed-usage).
+No server needed? Nacho also works as a standalone file-backed library:
+`config = Nacho("config.yaml")`. See
+[Standalone usage](#standalone-usage).
 
-## Running a Nacho Server
+## Running a server
 
-`NachoOrchestrator` wraps one or more `Nacho` instances in a FastAPI application.
-The server is API-first: use `/docs` for interactive OpenAPI documentation,
-`/ws/{app}` for live config updates, and `/ui` for the built-in management UI.
+The CLI is the usual way to run a server:
 
-Requires `pip install nacho-python[server]`.
-
-```python
-from nacho import Nacho, NachoOrchestrator
-
-apps = {
-    "my-service": Nacho("config.yaml", events=True),
-}
-
-server = NachoOrchestrator(
-    apps=apps,
-    api_key="secure-key",
-    cors_origins=["https://admin.example.com"],
-)
-server.run(host="0.0.0.0", port=8000)
+```bash
+nacho server \
+  --config config.yaml \
+  --schema schema.json \
+  --port 8000 \
+  --api-key "secure-key" \
+  --data-dir ".nacho/apps" \
+  --history-limit 50
 ```
 
-The simplest way to start a server is the CLI — see [Command-Line Interface](#command-line-interface).
+The server binds to `127.0.0.1` by default. Pass `--host 0.0.0.0` to accept
+connections from other machines; the CLI prints a warning if you expose the
+server without `--api-key`, because an unauthenticated server grants full
+write access to anyone who can reach it.
 
-### Management UI
+Run exactly **one server process** per data directory. App state, revision
+counters, and WebSocket subscriptions live in process memory, so running the
+app behind multiple workers (e.g. `uvicorn --workers 2`) or pointing two
+server processes at the same `--data-dir` produces inconsistent revisions and
+missed live updates.
 
-Nacho ships a built-in web UI for managing apps, configurations, and schemas.
-Once the server is running it is available at `/ui` — there is no separate
-process or build step; the page is a single file served directly by FastAPI.
+| Flag | Default | Description |
+|---|---|---|
+| `--host` | `127.0.0.1` | Bind address (`0.0.0.0` to listen on all interfaces) |
+| `--port` | `8000` | Bind port |
+| `--config`, `-c` | none | Configuration file to serve as an app |
+| `--schema` | none | JSON Schema enforced for `--config` |
+| `--app-name` | `default` | App name for the `--config` file |
+| `--data-dir` | none | Directory for API-created app state and history |
+| `--api-key` | none | Enable bearer-token authentication |
+| `--read-only-api-key` | none | Additional key granting read access only |
+| `--history-limit` | `50` | Revision snapshots kept per app (`0` disables history) |
+| `--read-only` | off | Reject every write |
+| `--reload` | off | Auto-reload for development |
 
-The UI supports:
+### Embedding in an existing application
 
-- **App management** — list, create, rename, describe, and delete apps.
-- **Configuration editing** — a code editor for JSON, YAML, and TOML with
-  syntax highlighting, one-click format switching, on-demand validation, and
-  revision-aware saves (a stale write surfaces a conflict instead of
-  clobbering newer data).
-- **Schema editing** — view, edit, or clear an app's JSON Schema after
-  creation, in JSON, YAML, or TOML; the current configuration is re-checked
-  against the new schema.
-- **Live updates** — changes pushed over WebSocket are reflected in real time.
-
-When the server is started with `--api-key`, the UI prompts for the key on
-first load and remembers it in the browser. The `/ui` page itself is public so
-the sign-in screen can load; every API call behind it stays authenticated.
-
-### Mounting into an existing FastAPI application
+`NachoOrchestrator` wraps one or more `Nacho` instances in a FastAPI
+application, so a server can also be constructed in code or mounted into an
+existing app:
 
 ```python
 from fastapi import FastAPI
@@ -198,101 +171,188 @@ app = FastAPI(title="My Application")
 orchestrator = NachoOrchestrator(
     apps={"config": Nacho("config.yaml", events=True)},
     api_key="secure-key",
+    cors_origins=["https://admin.example.com"],
 )
 
-# Configuration API available under /config
-app.mount("/config", orchestrator.app)
+app.mount("/config", orchestrator.app)   # configuration API under /config
 ```
 
-	Interactive API documentation is available at `/docs` (Swagger) and `/redoc` once the server is running.
+Run it directly with `orchestrator.run(host="127.0.0.1", port=8000)` when it
+is not mounted.
 
-### API write format and revisions
+### Management UI
 
-The API accepts native JSON objects for config and schema payloads:
+The server hosts a single-file web UI at `/ui` — no separate process, no build
+step. It provides:
+
+- App management: list, create, rename, describe, and delete apps.
+- Configuration editing: a code editor for JSON, YAML, and TOML with syntax
+  highlighting, format switching, on-demand validation, and revision-aware
+  saves that surface conflicts instead of clobbering newer data.
+- Schema editing: view, edit, or clear an app's JSON Schema; the current
+  configuration is re-checked against the new schema before it is accepted.
+- History: browse revision snapshots and restore any of them with one click.
+- Live updates: changes pushed over WebSocket are reflected in real time, and
+  unsaved local edits are preserved when a remote change arrives.
+
+When the server runs with `--api-key`, the UI prompts for the key on first
+load. The `/ui` page itself is public so the sign-in screen can load; every
+API call behind it requires authentication.
+
+### Authentication
+
+Passing `--api-key` (or `api_key=` to `NachoOrchestrator`) enables bearer
+authentication for the whole API. Clients send the key either as an
+`Authorization: Bearer <key>` header or through the cookie the UI sets for
+its own WebSocket handshake. Requests with a missing or wrong key receive
+`401 Unauthorized`. The comparison is timing-safe.
+
+A second key can be added with `--read-only-api-key` (or
+`read_only_api_key=`). It authenticates GETs and WebSocket subscriptions but
+receives `403 Forbidden` on any write — hand it to dashboards, pollers, and
+services that only consume configuration, so the write credential never
+leaves the operators who need it.
+
+`/`, `/health`, `/ui`, `/docs`, `/redoc`, and `/openapi.json` stay public: the
+API surface is not a secret, only the data behind it.
+
+Cross-origin browser access is disabled unless you opt in with
+`cors_origins=[...]` — the bundled UI is same-origin and the SDK/CLI are not
+browsers, so a drive-by web page cannot reach a default server.
+
+## REST API
+
+Interactive documentation is available at `/docs` (Swagger UI) and `/redoc`
+once the server is running.
+
+### Payload format
+
+Config and schema payloads are native JSON objects:
 
 ```bash
-curl -X POST http://localhost:8000/api/apps \
+curl -X POST http://127.0.0.1:8000/api/apps \
   -H "Authorization: Bearer secure-key" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "my-service",
     "data": {"database": {"host": "localhost", "port": 5432}},
-    "schema": {
-      "type": "object",
-      "properties": {
-        "database": {"type": "object"}
-      }
-    }
+    "schema": {"type": "object", "properties": {"database": {"type": "object"}}}
   }'
 ```
 
-The older encoded-string format is still supported for JSON, YAML, and TOML:
+Payloads may also be sent as encoded strings in any supported format, which
+is how the CLI and UI submit YAML and TOML:
 
 ```json
-{"data": "{\"feature\": true}", "format": "json"}
+{"data": "database:\n  host: localhost\n", "format": "yaml"}
 ```
 
-Full-config reads return `ETag` and `X-Nacho-Revision`. Writes can include either `If-Match: "<revision>"` or a JSON `revision` field. If the server has moved ahead, the write returns `409 Conflict` and leaves the config unchanged.
+### Revisions and optimistic concurrency
+
+Every app carries a monotonically increasing revision, bumped on each
+successful write. Reads of `/config` (full or per-path) return the current
+revision in the `ETag` and `X-Nacho-Revision` response headers. Writes may
+include a `revision` field stating the revision the client last saw; if the
+server has moved on, the write fails with `409 Conflict` and the stored
+configuration is left untouched:
 
 ```bash
-curl http://localhost:8000/api/apps/my-service/config \
+curl -X PUT http://127.0.0.1:8000/api/apps/my-service/config/cache.ttl \
   -H "Authorization: Bearer secure-key" \
-  -i
-
-curl -X PUT http://localhost:8000/api/apps/my-service/config/cache.ttl \
-  -H "Authorization: Bearer secure-key" \
-  -H "If-Match: \"3\"" \
   -H "Content-Type: application/json" \
-  -d '{"value": 600}'
+  -d '{"value": 600, "revision": 3}'
 ```
 
-### API reference
+Omitting `revision` performs an unconditional write.
 
-**System**
+The `ETag` also enables cheap polling: send it back as `If-None-Match` and
+the server answers `304 Not Modified` — no body — until the revision moves.
+
+```bash
+curl -H 'If-None-Match: "3"' http://127.0.0.1:8000/api/apps/my-service/config
+```
+
+### History and rollback
+
+The server snapshots every revision (configuration, schema, and metadata)
+into a per-app ring buffer — on disk under `data_dir/history/` when a data
+directory is configured, in memory otherwise. `--history-limit` controls
+retention.
+
+Rollback is roll-forward: restoring revision 41 does not rewrite history but
+creates a new revision whose content equals snapshot 41. The revision counter
+stays monotonic, live clients are notified like on any other write, and a
+rollback can itself be rolled back. A snapshot restores configuration and
+schema together, so the result is always self-consistent.
+
+```bash
+curl http://127.0.0.1:8000/api/apps/my-service/history
+curl http://127.0.0.1:8000/api/apps/my-service/history/41
+curl -X POST http://127.0.0.1:8000/api/apps/my-service/rollback \
+  -H "Content-Type: application/json" \
+  -d '{"revision": 41, "expected_revision": 42}'
+```
+
+### Endpoint reference
+
+System:
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/health` | GET | Health check and instance summary |
 | `/ui` | GET | Built-in web management UI |
+| `/docs`, `/redoc` | GET | Interactive API documentation |
 | `/api/convert` | POST | Convert a payload between JSON, YAML, and TOML |
 
-**App management**
+App management:
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/apps` | GET | List all apps |
-| `/api/apps` | POST | Create a new app |
+| `/api/apps` | POST | Create an app |
 | `/api/apps/{app}` | GET | Get app info |
-| `/api/apps/{app}` | PUT | Replace app config and metadata |
+| `/api/apps/{app}` | PUT | Replace an app's config, schema, and description |
 | `/api/apps/{app}` | DELETE | Delete an app |
-| `/api/apps/{app}/metadata` | PATCH | Update app name or description |
+| `/api/apps/{app}/metadata` | PATCH | Rename an app or change its description |
 
-**Configuration**
+Configuration and schema:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/apps/{app}/config` | GET | Get full configuration |
-| `/api/apps/{app}/config` | PUT | Replace full configuration |
-| `/api/apps/{app}/config/{path}` | GET | Get value at path |
-| `/api/apps/{app}/config/{path}` | PUT | Set value at path |
-| `/api/apps/{app}/config/{path}` | DELETE | Delete key at path |
+| `/api/apps/{app}/config` | GET | Get the full configuration |
+| `/api/apps/{app}/config` | PUT | Replace the full configuration |
+| `/api/apps/{app}/config/{path}` | GET | Get the value at a dotted path |
+| `/api/apps/{app}/config/{path}` | PUT | Set the value at a dotted path |
+| `/api/apps/{app}/config/{path}` | DELETE | Delete the key at a dotted path |
 | `/api/apps/{app}/schema` | GET | Get the app's JSON Schema |
 | `/api/apps/{app}/schema` | PUT | Replace or clear the app's JSON Schema |
-| `/api/apps/{app}/validate` | POST | Validate a config payload against the schema |
+| `/api/apps/{app}/validate` | POST | Validate a payload against the app's schema |
 
-**Real-time**
+History:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/apps/{app}/history` | GET | List revision snapshots, newest first |
+| `/api/apps/{app}/history/{revision}` | GET | Get one revision snapshot |
+| `/api/apps/{app}/rollback` | POST | Restore a snapshot as a new revision |
+
+Real-time:
 
 | Endpoint | Protocol | Description |
 |---|---|---|
-| `/ws/{app}` | WebSocket | Receive configuration change events |
+| `/ws/{app}` | WebSocket | Receive the current config on subscribe, then every change |
 
-## Remote Clients
+The WebSocket is receive-only: the server sends an `initial_config` message
+on subscribe followed by an `update` message per change, each carrying the
+app name, revision, and full configuration. Writes always go through REST, so
+there is never ambiguity about who owns the state.
 
-A remote client connects to a Nacho server and optionally receives real-time
-updates over WebSocket. The client writes through the REST API; the server
-pushes changes back over WebSocket. Once constructed, a remote-backed `Nacho`
-instance behaves **exactly** like a file-backed one — the same `get`, `set`,
-`on_change`, and schema APIs.
+## Remote clients
+
+A remote client reads and writes through the REST API and receives pushes
+over WebSocket. Once constructed, a remote-backed `Nacho` instance behaves
+exactly like a file-backed one — the same `get`, `set`, `on_change`, and
+schema APIs.
 
 Requires `pip install nacho-python[remote]`.
 
@@ -317,32 +377,55 @@ storage = RemoteStorageBackend(
     url="https://config-server.example.com",
     app_name="my-service",
     api_key="secure-key",
-    watch=True,  # opt in to WebSocket updates
+    watch=True,               # opt in to WebSocket updates
 )
 
 config = Nacho(storage=storage, events=True)
 
-# The API is identical to file-backed usage
 host = config.get("database.host")
 
-# Handlers fire on changes pushed from the server
 @config.on_change("features.*")
 def on_feature_change(path, new_value, **kwargs):
     print(f"feature flag updated: {path} = {new_value}")
 ```
 
-You can also reach a server without the SDK at all — straight from the
-[command line](#remote):
+Connecting never mutates the server: a wrong API key fails loudly at
+construction, reading a nonexistent app raises a clear error (so a typo
+cannot silently return an empty config), and the first `save()` to a
+nonexistent app creates it.
 
-```bash
-nacho get database.host --remote http://config-server:8000 --app-name my-service
+The backend is revision-aware. Every load and push records the server
+revision it saw, and `save()` sends it back — if another client wrote in
+between, `save()` raises `ConflictError` (with the server's expected/actual
+revisions) instead of silently overwriting the other write. Call `load()`,
+reapply your change, and save again:
+
+```python
+from nacho import ConflictError
+
+try:
+    config.save()
+except ConflictError:
+    config.load()          # pick up the concurrent change
+    config.set("my.key", value)
+    config.save()
 ```
 
-## Event System
+If the WebSocket connection drops, the watcher reconnects automatically with
+a bounded number of consecutive retries (`reconnect=0` retries forever), and
+the counter resets on every successful connection. Keepalive pings detect
+half-open connections, and permanent failures (bad key, deleted app) stop
+the retry loop with a clear log line instead of retrying forever. Stale or
+out-of-order pushes are dropped, so the local snapshot never rolls backwards.
 
-The event system dispatches change notifications after every successful write —
-whether the change was made locally or **pushed from a Nacho server**. Events
-carry the changed path, old value, new value, and event type.
+The CLI covers the same ground without the SDK — see
+[Command-line interface](#command-line-interface).
+
+## Event system
+
+With `events=True`, Nacho dispatches change notifications after every
+successful write, whether the change was made locally or pushed from a
+server. Events carry the changed path, old value, new value, and event type.
 
 ```python
 from nacho import Nacho, EventType
@@ -354,7 +437,7 @@ config = Nacho("config.yaml", events=True)
 def on_db_change(path, old_value, new_value, **kwargs):
     print(f"database key changed: {path}")
 
-# Fires once per write operation (aggregate event), regardless of which key changed
+# Fires once per write operation (aggregate event)
 @config.on_change("@global")
 def on_any_change(**kwargs):
     print("config was modified")
@@ -364,32 +447,38 @@ def on_any_change(**kwargs):
 def on_cache_change(event_type, path, new_value, **kwargs):
     print(f"{event_type.name} {path} = {new_value}")
 
-config.set("database.host", "new-host")  # triggers on_db_change, on_any_change
-config.set("cache.ttl", 600)             # triggers on_cache_change (CREATE)
-config.set("cache.ttl", 300)             # triggers on_cache_change (UPDATE)
+config.set("database.host", "new-host")  # on_db_change, on_any_change
+config.set("cache.ttl", 600)             # on_cache_change (CREATE)
+config.set("cache.ttl", 300)             # on_cache_change (UPDATE)
 ```
 
-**Path pattern reference:**
+Path pattern reference:
 
 | Pattern | Fires when |
 |---|---|
 | `None` (default) | Any change at any path |
 | `"@global"` | Once per write operation (aggregate) |
-| `"*"` | Any per-key event (not aggregate) |
+| `"*"` | Any per-key event (not the aggregate) |
 | `"database.*"` | Any key nested under `database` |
 
-Handlers may be sync or async. Async handlers are scheduled on the running event loop when one exists, or run via `asyncio.run()` otherwise.
+Handlers may be sync or async. Async handlers are scheduled on the running
+event loop when one exists, and executed with `asyncio.run()` otherwise.
+Registering a handler on an instance created without `events=True` logs a
+warning, because the handler would never fire.
 
-## Schema Validation
+## Schema validation
 
-Nacho enforces schema on every write. An invalid value raises `ValidationError` before the change is applied — the configuration is never left in an invalid state. This applies to local writes and to data accepted by the server alike.
+Nacho enforces the schema on every write. An invalid value raises
+`ValidationError` before the change is applied, so the configuration is never
+left in an invalid state. The same guarantee applies to local writes and to
+writes accepted by the server.
 
-Requires `pip install nacho-python[schema]`.
+Standalone usage requires `pip install nacho-python[schema]`.
 
 ```json
-// schema.json
 {
     "type": "object",
+    "required": ["database"],
     "properties": {
         "database": {
             "type": "object",
@@ -399,8 +488,7 @@ Requires `pip install nacho-python[schema]`.
                 "port": {"type": "integer", "minimum": 1024}
             }
         }
-    },
-    "required": ["database"]
+    }
 }
 ```
 
@@ -409,68 +497,55 @@ from nacho import Nacho, ValidationError
 
 config = Nacho("config.yaml", schema="schema.json")
 
-# Invalid write raises immediately — config is not modified
+# An invalid write raises immediately; the config is not modified
 try:
     config.set("database.port", "not-a-number")
 except ValidationError as e:
-    print(e.errors)  # list of violation strings
+    print(e.errors)                 # list of violation strings
 
-# Inspect the current config against the schema without writing
+# Inspect the current config without writing
 errors = config.validate()
-if errors:
-    print("Current config has violations:", errors)
 
 # Validate an arbitrary dict against the schema
 errors = config.check({"database": {"host": "localhost", "port": 80}})
-print(errors)  # ["port must be >= 1024"]
 ```
 
-## Standalone file-backed usage
+## Standalone usage
 
-Nacho doesn't require a server. Point it at a local file (or hand it a plain
-dict) and it works as a self-contained configuration library — handy for
-scripts, tests, and single-process apps. Everything below works identically
-whether Nacho is backed by a file, a dict, or a remote server.
+Nacho does not require a server. Point it at a local file, or hand it a plain
+dict, and it works as a self-contained configuration library for scripts,
+tests, and single-process applications. Everything below behaves identically
+with a file, a dict, or a remote server behind it.
 
-### Configuration management
-
-Nacho accepts a file path, a dict, or an explicit storage backend.
+### Reading and writing
 
 ```python
 from nacho import Nacho
 
-# In-memory with initial data
-config = Nacho({"database": {"host": "127.0.0.1", "port": 5432}})
+config = Nacho({"database": {"host": "127.0.0.1", "port": 5432}})  # in-memory
+config = Nacho("config.yaml")                                      # file-backed
 
-# File-backed
-config = Nacho("config.yaml")
+# Typed reads with sensible coercion
+host    = config.get("database.host")
+port    = config.get_int("database.port")
+debug   = config.get_bool("app.debug")
+tags    = config.get_list("app.tags")
+options = config.get_dict("app.options")
 
-# Read with type coercion
-host    = config.get("database.host")            # str
-port    = config.get_int("database.port")        # int
-debug   = config.get_bool("app.debug")           # bool
-tags    = config.get_list("app.tags")            # list
-options = config.get_dict("app.options")         # dict
-
-# Deep-merge additional keys (does not remove existing keys)
-config.update({"logging": {"level": "DEBUG"}})
-
-# Replace the entire config
+config.update({"logging": {"level": "DEBUG"}})   # deep-merge
 config.replace({"database": {"host": "prod-db", "port": 5432}})
-
-# Delete a key
 config.delete("legacy.setting")
-
-# Reload from storage and re-apply env overrides
-config.reload()
-
-# Export current config as a JSON string
-print(config.json())
+config.load()                                    # reload from storage
+config.save()                                    # persist to storage
+print(config.json())                             # export as a JSON string
 ```
 
-### Atomic transactions
+### Transactions
 
-Group multiple writes into a single atomic operation. The transaction commits when the block exits cleanly; it is discarded on any exception.
+Group multiple writes into one atomic operation. The transaction commits when
+the block exits cleanly and is discarded on any exception. Commit replays the
+transaction's operations onto the *current* configuration, so an unrelated
+write that landed while the transaction was open is preserved, not discarded:
 
 ```python
 with config.transaction() as txn:
@@ -482,7 +557,9 @@ config.save()
 
 ### Environment variable overrides
 
-Pass `env_prefix` to apply environment variables on top of the configuration at load time. Variable names follow the pattern `{PREFIX}_{NESTED_KEY}`, with nested levels separated by the delimiter (default: `_`).
+Pass `env_prefix` to overlay environment variables on the configuration at
+load time. Variable names follow `{PREFIX}_{NESTED_KEY}`, with nesting levels
+separated by the delimiter (default `_`):
 
 ```bash
 export MYAPP_DATABASE_HOST=prod-db.example.com
@@ -491,140 +568,207 @@ export MYAPP_FEATURES_ENABLED=true
 ```
 
 ```python
-config = Nacho(
-    "config.yaml",
-    env_prefix="MYAPP",
-    env_delimiter="_",
-)
+config = Nacho("config.yaml", env_prefix="MYAPP")
 
-config.get("database.host")      # "prod-db.example.com"
-config.get_int("database.port")  # 5433
+config.get("database.host")          # "prod-db.example.com"
+config.get_int("database.port")      # 5433
 config.get_bool("features.enabled")  # True
 ```
 
-Environment values are coerced to bool, int, float, or JSON objects where possible, and fall back to string otherwise. Env overrides are runtime-only overlays: `save()` persists the stored config, not the effective env-overlaid values.
+Values are coerced where unambiguous: `true`/`false`/`yes`/`no`/`on`/`off`
+become booleans, numeric strings become numbers (`"1"` is the integer 1, not
+a boolean), and JSON-looking strings are parsed as JSON. Floats are only
+parsed when the text round-trips, so `MYAPP_VERSION=3.10` stays the string
+`"3.10"`, and quoting a value (`MYAPP_PORT='"8080"'`) forces it to stay a
+string. Everything else stays a string.
 
-## Command-Line Interface
+Keys with underscores in their names use a doubled delimiter for nesting:
+`MYAPP_DB__MAX_CONNECTIONS` sets `db.max_connections`. Env overrides are
+runtime-only overlays: `save()` persists the stored configuration, not the
+overlaid view.
+
+## Command-line interface
 
 ```bash
 nacho --help
 nacho --version
 ```
 
-### Server
+Every remote command takes `--remote <url>`, `--app-name <name>` (default
+`default`), and `--api-key <key>`. Errors are written to stderr, and exit
+codes distinguish failure classes so scripts can branch without parsing
+messages:
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Generic error (schema violation, transport failure, missing extras) |
+| 2 | Usage error (bad flags or arguments) |
+| 3 | Not found (missing app, key, path, or history revision) |
+| 4 | Revision conflict (a concurrent write won) |
+| 5 | Authentication failure (bad or missing API key, read-only server) |
+
+Output is rendered in `--format {json,yaml,toml}` (default `json`), so every
+command's output is machine-parseable; `nacho get missing.key` exits 3 with a
+stderr message instead of printing `None`.
+
+### Values
 
 ```bash
-nacho server \
-  --config config.yaml \
-  --schema schema.json \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --api-key "secure-key" \
-  --app-name "my-service" \
-  --data-dir ".nacho/apps" \
-  --event true \
-  --read-only false
-```
-
-### Remote
-
-```bash
-nacho get database.host \
-  --remote http://config-server:8000 \
-  --app-name my-service \
-  --api-key "secure-key"
-
-# Read full config and include the current remote revision
-nacho get \
-  --remote http://config-server:8000 \
-  --app-name my-service \
-  --api-key "secure-key" \
-  --format json \
-  --show-revision
-
-nacho set cache.ttl 600 \
-  --remote http://config-server:8000 \
-  --app-name my-service \
-  --api-key "secure-key" \
-  --revision 3
-
-nacho delete legacy.setting \
-  --remote http://config-server:8000 \
-  --app-name my-service \
-  --api-key "secure-key" \
-  --revision 4
-```
-
-### Local configuration
-
-```bash
-# Create a new config from a template
-nacho init config.yaml --template default
-
-# Available templates: empty, default, web-app, api-service, microservice
-
-# Read
+# Read a key, or the whole config, locally or remotely
 nacho get database.host --config config.yaml
-nacho get --config config.yaml --format json
+nacho get --format json --remote http://config-server:8000 --app-name my-service
 
-# Write
+# Include the current revision in the output
+nacho get --show-revision --format json --remote http://config-server:8000
+
+# Write and delete, with optional conflict-safe revision checks
+nacho set cache.ttl 600 --remote http://config-server:8000 --revision 3
+nacho delete legacy.setting --remote http://config-server:8000 --revision 4
+
+# Force a type when auto-detection would guess wrong
+nacho set app.version 3.10 --type str --remote http://config-server:8000
+nacho set app.flags '{"beta": true}' --type json --remote http://config-server:8000
+
+# Local file equivalents
 nacho set database.port 5432 --config config.yaml
-
-# Delete
 nacho delete legacy.setting --config config.yaml
+```
 
-# Validate against schema
+Local writes are read-modify-write on the file with no cross-process lock:
+the file itself is written atomically, but two `nacho set` commands racing on
+the same file can lose one of the updates. Point concurrent writers at a
+server (`--remote`) instead — that is what revision-checked writes are for.
+
+### Apps
+
+```bash
+nacho apps list --remote http://config-server:8000
+nacho apps create my-service \
+  --remote http://config-server:8000 \
+  --description "Core service" \
+  --config config.yaml \
+  --schema schema.json
+nacho apps show --remote http://config-server:8000 --app-name my-service
+nacho apps rename my-service-v2 --remote http://config-server:8000 --app-name my-service
+nacho apps describe "Payments service" --remote http://config-server:8000 --app-name my-service
+nacho apps delete my-service --remote http://config-server:8000
+```
+
+### Schemas and validation
+
+```bash
+# Print or replace the schema the server enforces
+nacho schema get --remote http://config-server:8000 --app-name my-service
+nacho schema push schema.json --remote http://config-server:8000 --app-name my-service
+
+# Validate a local file against the server's stored schema
+nacho validate --config config.yaml --remote http://config-server:8000 --app-name my-service
+
+# Validate against a local schema file instead
 nacho validate --config config.yaml --schema schema.json
+```
+
+### History and rollback
+
+```bash
+nacho history list --remote http://config-server:8000 --app-name my-service
+nacho history show 41 --remote http://config-server:8000 --app-name my-service
+
+# What changed between two revisions — or between revision 41 and now
+nacho history diff 41 42 --remote http://config-server:8000 --app-name my-service
+nacho history diff 41 --remote http://config-server:8000 --app-name my-service
+
+# Restore revision 41 as a new revision; --revision-check makes it conflict-safe
+nacho rollback 41 --remote http://config-server:8000 --app-name my-service --revision-check 42
+```
+
+### Live updates
+
+```bash
+# Print the current config, then one JSON line per change (Ctrl+C to stop)
+nacho watch --remote http://config-server:8000 --app-name my-service
+```
+
+### Scaffolding
+
+```bash
+# Create a config file from a built-in template
+nacho init config.yaml --template default
+# Templates: empty, default, web-app, api-service, microservice
 ```
 
 ## Docker
 
-Nacho ships a multi-stage `Dockerfile` that builds a small Alpine-based image
-running the configuration server. Published images are available from Docker Hub
+Nacho ships a multi-stage `Dockerfile` producing a small Alpine-based image
+that runs the configuration server as a non-root user, with a container
+health check against `/health`. Published images are available on Docker Hub
 and GHCR:
 
 ```bash
-# Pull from Docker Hub
 docker pull k3scat/nacho:latest
-
-# Pull from GitHub Container Registry
 docker pull ghcr.io/nya-foundation/nacho:latest
-
-# Build the image
-docker build -t nacho .
 
 # Run the server (UI at http://localhost:8000/ui)
 docker run -p 8000:8000 k3scat/nacho:latest
 
 # Run with authentication enabled
-docker run -p 8000:8000 ghcr.io/nya-foundation/nacho:latest \
-  server --config config.yaml --api-key "secure-key"
+docker run -p 8000:8000 k3scat/nacho:latest \
+  server --host 0.0.0.0 --config config.yaml --api-key "secure-key"
 
 # Mount your own config for the default app
 docker run -p 8000:8000 \
   -v "$(pwd)/config.yaml:/app/config.yaml" k3scat/nacho:latest
 ```
 
-Or use `docker-compose`:
+Or with Compose:
 
 ```bash
 docker compose up --build
 ```
 
-The image entrypoint is `nacho`, and the default command is
-`server --config config.yaml`. Append any `nacho server` flags
-(`--api-key`, `--read-only`, `--event`, …) to override the defaults. The
-container exposes port `8000` and runs as a non-root user.
+The image entrypoint is `nacho`; the default command is
+`server --host 0.0.0.0 --config config.yaml`. Append any `nacho server` flags
+to override the defaults. The container exposes port `8000`.
 
-## Current Limits
+## Operational notes
 
-- Dot-notation paths are intentionally simple. Literal dots in key names and numeric string keys are ambiguous; prefer nested object keys for now.
-- The built-in API key auth is suitable for local, private, or single-tenant deployments. Shared production deployments should add scoped tokens, audit logs, and rate limits in front of the service.
-- File-backed server state is best for development and small single-process deployments. Use the storage abstraction as the boundary for a stronger durable backend when you need multi-process or high-availability operation.
+- Dot-notation paths are intentionally simple. Literal dots in key names and
+  numeric string keys are ambiguous; prefer nested object keys.
+- The built-in API-key authentication suits local, private, and single-tenant
+  deployments. Shared production deployments should add scoped tokens, audit
+  logging, and rate limiting in front of the service.
+- Server state is file-backed and single-process. The revision counter is
+  authoritative in memory, so run one server process per data directory; the
+  storage abstraction is the boundary to implement a stronger backend if you
+  need multi-process or high-availability operation.
+- Editing a `--config` file by hand while the server is running is not
+  detected; the server's next write wins. Make changes through the API, CLI,
+  or UI.
+
+## Development
+
+```bash
+git clone https://github.com/nya-foundation/nacho.git
+cd nacho
+uv sync --all-extras
+
+uv run pytest                                  # fast suites (unit + smoke), 95% coverage gate
+uv run pytest -m "integration or e2e" --no-cov # live-server suites
+uv run pytest -m docker --no-cov               # builds and exercises the Docker image
+uv run playwright install chromium             # one-time browser download
+uv run pytest -m ui --no-cov                   # browser-driven web UI suite
+
+uvx ruff format . && uvx ruff check .          # formatting and lint (enforced in CI)
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch model, code style, and
+release process.
 
 ## Community
 
-Need help? Open an issue on [GitHub](https://github.com/nya-foundation/nacho/issues) or join the [Nya Foundation Discord](https://discord.gg/jXAxVPSs7K).
+Open an issue on [GitHub](https://github.com/nya-foundation/nacho/issues) or
+join the [Nya Foundation Discord](https://discord.gg/jXAxVPSs7K).
 
 ## License
 
