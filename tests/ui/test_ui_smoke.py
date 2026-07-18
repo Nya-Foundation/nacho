@@ -95,7 +95,7 @@ def select_default_app(page):
     expect(page.locator(EDITOR)).to_be_visible()
     # The live-update tests require the WebSocket to be connected before an
     # external write happens, otherwise the broadcast is missed.
-    expect(page.locator("#live-label")).to_have_text("live")
+    expect(page.locator("#live-label")).to_have_text("Live")
 
 
 # --------------------------------------------------------------------------- #
@@ -236,13 +236,13 @@ def test_dirty_editor_survives_remote_update_then_conflicts(make_live_server, ne
 
     # The UI must warn but keep the local edits and the OLD revision.
     warn = page.locator("#config-notice .notice.warn")
-    expect(warn).to_contain_text("changed on the server")
+    expect(warn).to_contain_text("Someone else just saved this app")
     expect(page.locator(EDITOR)).to_have_value('{"mine": "local-edit"}')
     expect(page.locator("#rev-label")).to_have_text("1")
 
     # Saving now must surface a revision conflict, not silently overwrite.
     page.click("#save-btn")
-    expect(warn).to_contain_text("Revision conflict")
+    expect(warn).to_contain_text("Someone else saved first")
     expect(page.locator("#conflict-reload")).to_be_visible()
 
     # The external writer's value survived on the server.
@@ -301,10 +301,10 @@ def test_ui_reconnects_after_server_restart(make_live_server, new_page):
     select_default_app(page)
 
     server.stop()
-    expect(page.locator("#live-label")).to_have_text("offline")
+    expect(page.locator("#live-label")).to_have_text("Reconnecting…")
 
     make_live_server(port=server.port, data_dir=server.data_dir)
-    expect(page.locator("#live-label")).to_have_text("live")
+    expect(page.locator("#live-label")).to_have_text("Live")
 
     # Live updates work again after the reconnect, not just the status dot.
     put_config(server.url, {"revived": True})
