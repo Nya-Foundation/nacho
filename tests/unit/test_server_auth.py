@@ -2,6 +2,9 @@
 
 import types
 
+import pytest
+
+from nacho.server.app import NachoOrchestrator
 from nacho.server.auth import ROLE_ADMIN, ROLE_READ, AuthGuard
 
 
@@ -60,6 +63,39 @@ class TestAuthGuard:
         assert guard.verify_websocket(_request(cookies={"NACHO_api_key": "secret"})) is True
         assert guard.verify_websocket(_request(headers={"Authorization": "Bearer secret"})) is True
         assert guard.verify_websocket(_request()) is False
+
+
+class TestKeyValidation:
+    """A misconfigured key must fail at construction, not at request time."""
+
+    @pytest.mark.parametrize("bad", [["k"], 1, True, {"k": 1}, ("k",), b"k"])
+    def test_non_str_key_raises_typeerror(self, bad):
+        with pytest.raises(TypeError, match="api_key must be a str"):
+            AuthGuard(api_key=bad)
+        with pytest.raises(TypeError, match="read_only_api_key must be a str"):
+            AuthGuard(read_only_api_key=bad)
+
+    def test_error_names_the_offending_type(self):
+        with pytest.raises(TypeError, match="got list"):
+            AuthGuard(api_key=["admin-key", "second-key"])
+
+    def test_none_and_str_remain_valid(self):
+        assert AuthGuard(api_key=None).enabled is False
+        assert AuthGuard(api_key="k").enabled is True
+
+    @pytest.mark.parametrize("falsy", [[], 0, {}])
+    def test_falsy_non_str_key_cannot_silently_disable_auth(self, falsy):
+        # The dangerous case: falsy non-str keys skip the orchestrator's
+        # `if api_key or read_only_api_key` guard, so without validation the
+        # server would come up entirely unauthenticated.
+        with pytest.raises(TypeError):
+            NachoOrchestrator(api_key=falsy)
+        with pytest.raises(TypeError):
+            NachoOrchestrator(read_only_api_key=falsy)
+
+    def test_orchestrator_rejects_non_str_key(self):
+        with pytest.raises(TypeError, match="api_key must be a str or None, got list"):
+            NachoOrchestrator(api_key=["admin-key"])
 
 
 class TestReadOnlyKey:

@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from nacho._version import __version__
 from nacho.config import Nacho
 from nacho.schema import ValidationError
-from nacho.server.auth import AuthGuard, AuthMiddleware
+from nacho.server.auth import AuthGuard, AuthMiddleware, validate_api_key
 from nacho.utils.io import dump_string, load_string
 from nacho.utils.path import get_nested_value
 
@@ -74,6 +74,11 @@ class NachoOrchestrator:
         # clients are not browsers, so cross-origin access is opt-in.
         self.cors_origins = list(cors_origins) if cors_origins is not None else []
         self.logger = logger or LOGGER
+        # Validate before the truthiness check below: a falsy non-str key
+        # (e.g. an empty list from a caller's own config) would otherwise
+        # skip AuthGuard entirely and leave the server unauthenticated.
+        api_key = validate_api_key("api_key", api_key)
+        read_only_api_key = validate_api_key("read_only_api_key", read_only_api_key)
         self.auth = (
             AuthGuard(api_key=api_key, read_only_api_key=read_only_api_key)
             if (api_key or read_only_api_key)
